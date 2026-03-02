@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>财联社电报整理台</title>
+  <style>
+    :root {
+      --bg: radial-gradient(1200px 700px at 0% -20%, #dff4ff 0%, transparent 55%),
+            radial-gradient(900px 540px at 100% -10%, #fef3c7 0%, transparent 50%),
+            linear-gradient(160deg, #f8fafc 0%, #eef2ff 45%, #f5f7fb 100%);
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-strong: rgba(255, 255, 255, 0.96);
+      --text: #0f172a;
+      --muted: #64748b;
+      --line: rgba(15, 23, 42, 0.12);
+      --brand: #0369a1;
+      --brand-soft: rgba(3, 105, 161, 0.1);
+      --ok: #0f766e;
+      --warn: #b45309;
+      --shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      padding: 16px;
+    }
+
+    .app {
+      max-width: 1320px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(500px, 1fr);
+      gap: 14px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .left {
+      padding: 14px;
+      position: sticky;
+      top: 16px;
+      height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0.2px;
+    }
+
+    .sub {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      border-radius: 12px;
+      padding: 8px 10px;
+    }
+
+    .stat b {
+      display: block;
+      font-size: 15px;
+      color: var(--brand);
+      margin-top: 2px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all .16s ease;
+    }
+
+    button:hover { transform: translateY(-1px); border-color: #93c5fd; }
+    button.active { background: var(--brand-soft); color: var(--brand); border-color: #7dd3fc; }
+    button.warn { color: #9a3412; border-color: #fdba74; }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 210px;
+      line-height: 1.55;
+    }
+
+    .tips {
+      margin-top: auto;
+      border-radius: 12px;
+      border: 1px dashed rgba(15, 23, 42, 0.2);
+      background: rgba(248, 250, 252, 0.85);
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .right {
+      min-height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .feed-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      background: var(--panel-strong);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .feed-head h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .badge {
+      font-size: 12px;
+      color: var(--ok);
+      background: rgba(15, 118, 110, 0.1);
+      border: 1px solid rgba(15, 118, 110, 0.2);
+      border-radius: 999px;
+      padding: 2px 9px;
+      white-space: nowrap;
+    }
+
+    .feed {
+      padding: 10px;
+      overflow: auto;
+      flex: 1;
+      scroll-behavior: smooth;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-left: 4px solid #7dd3fc;
+      background: var(--panel-strong);
+      border-radius: 12px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+      padding: 10px 12px;
+      margin-bottom: 9px;
+      animation: fade .22s ease;
+    }
+
+    .item:last-child { margin-bottom: 0; }
+
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .idx {
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: var(--brand);
+      border: 1px solid rgba(3, 105, 161, 0.18);
+      padding: 1px 8px;
+    }
+
+    .text {
+      font-size: 14px;
+      line-height: 1.68;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    mark {
+      background: #fde68a;
+      color: #111827;
+      border-radius: 4px;
+      padding: 0 2px;
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 42px 12px;
+    }
+
+    .compact .item {
+      padding: 8px 10px;
+      margin-bottom: 7px;
+    }
+
+    .compact .text {
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 999;
+      background: #111827;
+      color: #fff;
+      padding: 9px 12px;
+      border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all .22s ease;
+      pointer-events: none;
+      font-size: 13px;
+      max-width: min(460px, calc(100vw - 40px));
+    }
+
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @keyframes fade {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 1024px) {
+      body { padding: 12px; }
+      .app { grid-template-columns: 1fr; }
+      .left { position: static; height: auto; }
+      .right { min-height: 48vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel left">
+      <h1 class="title">财联社电报整理台</h1>
+      <div class="sub">从财联社页面复制电报文本后，直接粘贴到这里解析，做成更清晰的阅读流。</div>
+
+      <div class="stats">
+        <div class="stat">总条数<b id="stat-total">0</b></div>
+        <div class="stat">当前显示<b id="stat-visible">0</b></div>
+      </div>
+
+      <div class="controls">
+        <button id="btn-clipboard">剪贴板导入</button>
+        <button id="btn-parse" class="active">解析粘贴区</button>
+        <button id="btn-compact">紧凑模式</button>
+        <button id="btn-autoscroll" class="active">自动置顶</button>
+        <button id="btn-export">导出 TXT</button>
+        <button id="btn-clear" class="warn">清空全部</button>
+      </div>
+
+      <div class="field">
+        <label for="keyword">关键词过滤（用英文逗号分隔）</label>
+        <input id="keyword" type="text" placeholder="如：A股,AI,宁德时代" />
+      </div>
+
+      <div class="field">
+        <label for="source">粘贴财联社电报文本</label>
+        <textarea id="source" placeholder="在财联社电报页复制后粘贴到这里...\n支持多条批量解析"></textarea>
+      </div>
+
+      <div class="tips">
+        推荐流程：
+        1. 打开财联社电报页面，复制你要看的电报内容。
+        2. 回到本页点击“剪贴板导入”或直接粘贴。
+        3. 点击“解析粘贴区”生成阅读卡片。
+        4. 关闭页面也会自动保存本地数据（浏览器 LocalStorage）。
+      </div>
+    </aside>
+
+    <main class="panel right" id="feedWrap">
+      <div class="feed-head">
+        <h2>电报阅读流</h2>
+        <span class="badge" id="updated">未更新</span>
+      </div>
+      <div class="feed" id="feed"></div>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const STORE_KEY = 'cls_telegraph_feed_v1';
+    const MAX_ITEMS = 600;
+
+    const state = {
+      list: [],
+      keyword: '',
+      compact: false,
+      autoScroll: true,
+    };
+
+    const el = {
+      source: document.getElementById('source'),
+      feed: document.getElementById('feed'),
+      feedWrap: document.getElementById('feedWrap'),
+      keyword: document.getElementById('keyword'),
+      statTotal: document.getElementById('stat-total'),
+      statVisible: document.getElementById('stat-visible'),
+      updated: document.getElementById('updated'),
+      toast: document.getElementById('toast'),
+      btnClipboard: document.getElementById('btn-clipboard'),
+      btnParse: document.getElementById('btn-parse'),
+      btnCompact: document.getElementById('btn-compact'),
+      btnAutoScroll: document.getElementById('btn-autoscroll'),
+      btnExport: document.getElementById('btn-export'),
+      btnClear: document.getElementById('btn-clear'),
+    };
+
+    function nowText() {
+      return new Date().toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function showToast(msg) {
+      el.toast.textContent = msg;
+      el.toast.classList.add('show');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => el.toast.classList.remove('show'), 1700);
+    }
+
+    function escapeHTML(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function highlight(text, keyword) {
+      let output = escapeHTML(text);
+      if (!keyword) return output;
+      const parts = keyword.split(',').map(s => s.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+      for (const p of parts) {
+        const safe = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        output = output.replace(new RegExp(safe, 'gi'), m => `<mark>${m}</mark>`);
+      }
+      return output;
+    }
+
+    function passFilter(text) {
+      const k = state.keyword.trim();
+      if (!k) return true;
+      const parts = k.split(',').map(s => s.trim()).filter(Boolean);
+      if (!parts.length) return true;
+      return parts.some(x => text.includes(x));
+    }
+
+    function parseBlocks(raw) {
+      const text = String(raw || '').replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+      if (!text) return [];
+
+      const normalized = text.replace(/\n\s*(\d{1,2}:\d{2}(?::\d{2})?)\s*/g, '\n$1 ');
+      const reg = /(?:^|\n)\s*((?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)\s*([\s\S]*?)(?=(?:\n\s*(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\s)|$)/g;
+
+      const out = [];
+      let m;
+      while ((m = reg.exec(normalized)) !== null) {
+        const time = m[1].replace('：', ':');
+        const body = m[2].replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (!body || body.length < 6) continue;
+        out.push({
+          time,
+          text: body,
+          key: `${time}|${body.slice(0, 120)}`,
+          createdAt: Date.now(),
+        });
+      }
+
+      if (out.length) return out;
+
+      const fallback = [];
+      for (const line of text.split('\n')) {
+        const m2 = line.match(/^\s*((?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)\s*(.+)$/);
+        if (!m2) continue;
+        const body = m2[2].replace(/\s+/g, ' ').trim();
+        if (!body) continue;
+        fallback.push({
+          time: m2[1],
+          text: body,
+          key: `${m2[1]}|${body.slice(0, 120)}`,
+          createdAt: Date.now(),
+        });
+      }
+      return fallback;
+    }
+
+    function save() {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state.list.slice(0, MAX_ITEMS)));
+    }
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(STORE_KEY);
+        if (!raw) return;
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) state.list = arr;
+      } catch (_) {}
+    }
+
+    function mergeItems(items) {
+      if (!items.length) return 0;
+      const existing = new Set(state.list.map(x => x.key));
+      let added = 0;
+      for (const item of items) {
+        if (existing.has(item.key)) continue;
+        existing.add(item.key);
+        state.list.unshift(item);
+        added += 1;
+      }
+      if (state.list.length > MAX_ITEMS) state.list.length = MAX_ITEMS;
+      save();
+      return added;
+    }
+
+    function render() {
+      const list = state.list.filter(i => passFilter(i.text));
+      el.statTotal.textContent = String(state.list.length);
+      el.statVisible.textContent = String(list.length);
+
+      if (!list.length) {
+        el.feed.innerHTML = '<div class="empty">暂无可显示电报，先在左侧粘贴内容并解析。</div>';
+        return;
+      }
+
+      el.feed.innerHTML = list.map((item, idx) => {
+        return `
+          <article class="item">
+            <div class="head">
+              <span class="idx">#${list.length - idx}</span>
+              <span>${escapeHTML(item.time)}</span>
+            </div>
+            <div class="text">${highlight(item.text, state.keyword)}</div>
+          </article>
+        `;
+      }).join('');
+
+      if (state.autoScroll) el.feed.scrollTop = 0;
+    }
+
+    function onParse() {
+      const text = el.source.value.trim();
+      if (!text) {
+        showToast('粘贴区为空');
+        return;
+      }
+      const parsed = parseBlocks(text);
+      if (!parsed.length) {
+        showToast('未识别到电报格式（需要包含时间）');
+        return;
+      }
+      const added = mergeItems(parsed);
+      render();
+      el.updated.textContent = `最近更新 ${nowText()}`;
+      showToast(`解析 ${parsed.length} 条，新增 ${added} 条`);
+    }
+
+    async function onClipboard() {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        showToast('当前浏览器不支持剪贴板读取');
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text.trim()) {
+          showToast('剪贴板内容为空');
+          return;
+        }
+        el.source.value = text;
+        onParse();
+      } catch (_) {
+        showToast('剪贴板读取失败，请直接粘贴');
+      }
+    }
+
+    function exportTxt() {
+      if (!state.list.length) {
+        showToast('暂无数据可导出');
+        return;
+      }
+      const lines = state.list.map(i => `${i.time} ${i.text}`);
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = URL.createObjectURL(blob);
+      a.download = `cls_telegraph_${date}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(a.href);
+        a.remove();
+      }, 300);
+    }
+
+    function clearAll() {
+      if (!confirm('确认清空所有已保存电报？')) return;
+      state.list = [];
+      save();
+      render();
+      showToast('已清空');
+    }
+
+    function bind() {
+      el.btnParse.addEventListener('click', onParse);
+      el.btnClipboard.addEventListener('click', onClipboard);
+      el.btnExport.addEventListener('click', exportTxt);
+      el.btnClear.addEventListener('click', clearAll);
+
+      el.keyword.addEventListener('input', () => {
+        state.keyword = el.keyword.value.trim();
+        render();
+      });
+
+      el.btnCompact.addEventListener('click', () => {
+        state.compact = !state.compact;
+        el.feedWrap.classList.toggle('compact', state.compact);
+        el.btnCompact.classList.toggle('active', state.compact);
+      });
+
+      el.btnAutoScroll.addEventListener('click', () => {
+        state.autoScroll = !state.autoScroll;
+        el.btnAutoScroll.classList.toggle('active', state.autoScroll);
+        el.btnAutoScroll.textContent = state.autoScroll ? '自动置顶' : '自动置顶:关';
+      });
+    }
+
+    function init() {
+      load();
+      bind();
+      render();
+      if (state.list.length) {
+        el.updated.textContent = `读取本地缓存 ${state.list.length} 条`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

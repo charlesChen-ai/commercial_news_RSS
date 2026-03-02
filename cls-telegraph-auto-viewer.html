@@ -1,0 +1,1131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>多源财经快讯自动盯盘台</title>
+  <style>
+    :root {
+      --bg: radial-gradient(1200px 700px at 0% -20%, #d9f3ff 0%, transparent 52%),
+            radial-gradient(1000px 620px at 100% 0%, #fdecc8 0%, transparent 55%),
+            linear-gradient(160deg, #f8fafc 0%, #eef2ff 50%, #f5f7fb 100%);
+      --panel: rgba(255, 255, 255, 0.84);
+      --panel-strong: rgba(255, 255, 255, 0.96);
+      --text: #0f172a;
+      --muted: #64748b;
+      --line: rgba(15, 23, 42, 0.12);
+      --brand: #0c4a6e;
+      --brand-soft: rgba(12, 74, 110, 0.1);
+      --green: #0f766e;
+      --red: #b91c1c;
+      --amber: #b45309;
+      --shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background: var(--bg);
+      font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      padding: 16px;
+    }
+
+    .app {
+      max-width: 1360px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(560px, 1fr);
+      gap: 14px;
+      transition: grid-template-columns .22s ease;
+    }
+
+    .app.sidebar-collapsed {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    .left {
+      padding: 14px;
+      position: sticky;
+      top: 16px;
+      height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: opacity .2s ease, transform .22s ease, padding .2s ease, border-color .2s ease;
+    }
+
+    .app.sidebar-collapsed .left {
+      opacity: 0;
+      transform: translateX(-14px);
+      pointer-events: none;
+      height: 0;
+      padding: 0;
+      overflow: hidden;
+      border-color: transparent;
+      box-shadow: none;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0.2px;
+    }
+
+    .left-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .btn-ghost {
+      width: auto;
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(12, 74, 110, 0.2);
+      color: var(--brand);
+      white-space: nowrap;
+    }
+
+    .btn-ghost:hover {
+      border-color: rgba(12, 74, 110, 0.42);
+      transform: translateY(-1px);
+    }
+
+    .desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: var(--panel-strong);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .stat b {
+      display: block;
+      color: var(--brand);
+      font-size: 16px;
+      margin-top: 2px;
+      line-height: 1;
+    }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    input, select, button {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+      padding: 9px 10px;
+      font-size: 13px;
+    }
+
+    button {
+      cursor: pointer;
+      transition: all .16s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: #7dd3fc;
+    }
+
+    button.active {
+      background: var(--brand-soft);
+      color: var(--brand);
+      border-color: #7dd3fc;
+    }
+
+    button.warn {
+      color: #9a3412;
+      border-color: #fdba74;
+    }
+
+    .status {
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      background: rgba(248, 250, 252, 0.85);
+      padding: 9px 10px;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+
+    .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      margin-right: 6px;
+      background: #9ca3af;
+    }
+
+    .dot.ok { background: var(--green); }
+    .dot.err { background: var(--red); }
+    .dot.run { background: var(--amber); }
+
+    .tips {
+      margin-top: auto;
+      border-radius: 12px;
+      border: 1px dashed rgba(15, 23, 42, 0.2);
+      background: rgba(248, 250, 252, 0.9);
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .right {
+      min-height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      background: var(--panel-strong);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .head h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .badge {
+      font-size: 12px;
+      color: var(--green);
+      background: rgba(15, 118, 110, 0.1);
+      border: 1px solid rgba(15, 118, 110, 0.25);
+      border-radius: 999px;
+      padding: 2px 9px;
+      white-space: nowrap;
+    }
+
+    .feed {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+      scroll-behavior: smooth;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-left: 4px solid #7dd3fc;
+      background: var(--panel-strong);
+      border-radius: 12px;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+      padding: 10px 12px;
+      margin-bottom: 9px;
+    }
+
+    .item.level-a {
+      border-left-color: #dc2626;
+      background: linear-gradient(90deg, rgba(220, 38, 38, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+    }
+
+    .item.level-b {
+      border-left-color: #ea580c;
+      background: linear-gradient(90deg, rgba(234, 88, 12, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+    }
+
+    .item.level-c {
+      border-left-color: #0284c7;
+      background: linear-gradient(90deg, rgba(2, 132, 199, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+    }
+
+    .item.level-n {
+      border-left-color: #64748b;
+    }
+
+    .item:last-child { margin-bottom: 0; }
+
+    .item-head {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .source-badge {
+      border-radius: 999px;
+      border: 1px solid transparent;
+      padding: 1px 8px;
+      font-weight: 600;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+
+    .source-cls {
+      color: #0f766e;
+      background: rgba(15, 118, 110, 0.12);
+      border-color: rgba(15, 118, 110, 0.22);
+    }
+
+    .source-eastmoney {
+      color: #92400e;
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.24);
+    }
+
+    .source-sina {
+      color: #9f1239;
+      background: rgba(244, 63, 94, 0.12);
+      border-color: rgba(244, 63, 94, 0.24);
+    }
+
+    .source-wscn {
+      color: #1d4ed8;
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.24);
+    }
+
+    .source-ths {
+      color: #6d28d9;
+      background: rgba(139, 92, 246, 0.12);
+      border-color: rgba(139, 92, 246, 0.24);
+    }
+
+    .source-other {
+      color: #334155;
+      background: rgba(100, 116, 139, 0.12);
+      border-color: rgba(100, 116, 139, 0.24);
+    }
+
+    .lv {
+      border-radius: 999px;
+      border: 1px solid transparent;
+      padding: 1px 8px;
+      font-weight: 700;
+    }
+
+    .lv.lv-a {
+      color: #991b1b;
+      background: rgba(220, 38, 38, 0.12);
+      border-color: rgba(220, 38, 38, 0.22);
+    }
+
+    .lv.lv-b {
+      color: #9a3412;
+      background: rgba(234, 88, 12, 0.12);
+      border-color: rgba(234, 88, 12, 0.22);
+    }
+
+    .lv.lv-c {
+      color: #0c4a6e;
+      background: rgba(2, 132, 199, 0.12);
+      border-color: rgba(2, 132, 199, 0.22);
+    }
+
+    .lv.lv-n {
+      color: #334155;
+      background: rgba(100, 116, 139, 0.12);
+      border-color: rgba(100, 116, 139, 0.22);
+    }
+
+    .title-row {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-bottom: 5px;
+    }
+
+    .text {
+      font-size: 14px;
+      line-height: 1.68;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #1f2937;
+    }
+
+    .expand-wrap {
+      margin-top: 2px;
+    }
+
+    .expand-wrap summary {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--brand);
+      background: rgba(12, 74, 110, 0.08);
+      border: 1px solid rgba(12, 74, 110, 0.18);
+      border-radius: 999px;
+      padding: 2px 9px;
+      margin-bottom: 8px;
+    }
+
+    .expand-wrap summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .expand-wrap summary::before {
+      content: '▸';
+      font-size: 12px;
+      line-height: 1;
+      transition: transform .16s ease;
+    }
+
+    .expand-wrap[open] summary::before {
+      transform: rotate(90deg);
+    }
+
+    .expand-wrap[open] summary {
+      margin-bottom: 6px;
+      background: rgba(12, 74, 110, 0.14);
+      border-color: rgba(12, 74, 110, 0.24);
+    }
+
+    .meta {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    mark {
+      background: #fde68a;
+      color: #111827;
+      border-radius: 4px;
+      padding: 0 2px;
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 42px 12px;
+    }
+
+    .compact .item {
+      padding: 8px 10px;
+      margin-bottom: 7px;
+    }
+
+    .compact .text {
+      font-size: 13px;
+      line-height: 1.52;
+    }
+
+    .compact .expand-wrap summary {
+      font-size: 11px;
+      padding: 1px 8px;
+      margin-bottom: 6px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 999;
+      background: #111827;
+      color: #fff;
+      padding: 9px 12px;
+      border-radius: 10px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all .22s ease;
+      pointer-events: none;
+      font-size: 13px;
+      max-width: min(460px, calc(100vw - 40px));
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .sidebar-float {
+      position: fixed;
+      left: 20px;
+      top: 20px;
+      z-index: 999;
+      width: auto;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(12, 74, 110, 0.22);
+      color: var(--brand);
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: none;
+    }
+
+    .sidebar-float.show {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    @media (max-width: 1024px) {
+      body { padding: 12px; }
+      .app { grid-template-columns: 1fr; }
+      .left { position: static; height: auto; }
+      .right { min-height: 48vh; }
+      .sidebar-float { top: 12px; left: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="panel left">
+      <div class="left-head">
+        <h1 class="title">多源财经快讯自动盯盘台</h1>
+        <button id="btn-sidebar" class="btn-ghost" type="button">折叠面板</button>
+      </div>
+      <div class="desc">自动聚合财联社、东方财富、新浪财经、华尔街见闻、同花顺，不需要手动复制。</div>
+
+      <div class="stats">
+        <div class="stat">累计缓存<b id="stat-total">0</b></div>
+        <div class="stat">当前显示<b id="stat-visible">0</b></div>
+      </div>
+
+      <div class="grid2">
+        <button id="btn-toggle" class="active">自动刷新: 开</button>
+        <button id="btn-refresh">立即刷新</button>
+      </div>
+
+      <div class="grid2">
+        <button id="btn-compact">紧凑模式</button>
+        <button id="btn-clear" class="warn">清空缓存</button>
+      </div>
+
+      <div class="field">
+        <label for="interval">刷新间隔（秒）</label>
+        <input id="interval" type="number" min="3" max="120" step="1" value="8" />
+      </div>
+
+      <div class="field">
+        <label for="limit">每次抓取条数</label>
+        <input id="limit" type="number" min="20" max="500" step="10" value="120" />
+      </div>
+
+      <div class="field">
+        <label for="keyword">关键词过滤（英文逗号分隔）</label>
+        <input id="keyword" type="text" placeholder="如：A股,AI,宁德时代" />
+      </div>
+
+      <div class="field">
+        <label for="sourceFilter">来源筛选</label>
+        <select id="sourceFilter">
+          <option value="all">全部来源</option>
+          <option value="cls">财联社</option>
+          <option value="eastmoney">东方财富</option>
+          <option value="sina">新浪财经</option>
+          <option value="wscn">华尔街见闻</option>
+          <option value="ths">同花顺</option>
+        </select>
+      </div>
+
+      <div class="status" id="statusBox">
+        <div><span class="dot" id="dot"></span><span id="statusText">等待首次同步</span></div>
+        <div id="lastSync">上次更新：--</div>
+        <div id="apiInfo">接口：/api/telegraph（多源聚合）</div>
+      </div>
+
+      <div class="tips">
+        使用方式：
+        1. 先运行本地代理服务。
+        2. 打开此页面后会自动拉取并持续刷新。
+        3. 如果出现拦截，等几秒重试，或把间隔调大（如 12~20 秒）。
+      </div>
+    </aside>
+
+    <main class="panel right" id="feedWrap">
+      <div class="head">
+        <h2>实时电报流</h2>
+        <span class="badge" id="updated">未更新</span>
+      </div>
+      <div class="feed" id="feed"></div>
+    </main>
+  </div>
+
+  <button id="btn-sidebar-float" class="sidebar-float" type="button">展开面板</button>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const STORE_KEY = 'cls_auto_telegraph_feed_v2';
+    const MAX_ITEMS = 1000;
+    const SOURCE_NAME_MAP = {
+      cls: '财联社',
+      eastmoney: '东方财富',
+      sina: '新浪财经',
+      wscn: '华尔街见闻',
+      ths: '同花顺',
+    };
+
+    const state = {
+      list: [],
+      seen: new Set(),
+      expanded: new Set(),
+      keyword: '',
+      sourceFilter: 'all',
+      sidebarCollapsed: false,
+      compact: false,
+      auto: true,
+      intervalSec: 8,
+      limit: 120,
+      timer: null,
+      loading: false,
+      lastError: '',
+    };
+
+    const el = {
+      app: document.getElementById('app'),
+      feed: document.getElementById('feed'),
+      feedWrap: document.getElementById('feedWrap'),
+      statTotal: document.getElementById('stat-total'),
+      statVisible: document.getElementById('stat-visible'),
+      updated: document.getElementById('updated'),
+      toast: document.getElementById('toast'),
+      btnToggle: document.getElementById('btn-toggle'),
+      btnRefresh: document.getElementById('btn-refresh'),
+      btnCompact: document.getElementById('btn-compact'),
+      btnClear: document.getElementById('btn-clear'),
+      btnSidebar: document.getElementById('btn-sidebar'),
+      btnSidebarFloat: document.getElementById('btn-sidebar-float'),
+      interval: document.getElementById('interval'),
+      limit: document.getElementById('limit'),
+      keyword: document.getElementById('keyword'),
+      sourceFilter: document.getElementById('sourceFilter'),
+      dot: document.getElementById('dot'),
+      statusText: document.getElementById('statusText'),
+      lastSync: document.getElementById('lastSync'),
+      apiInfo: document.getElementById('apiInfo'),
+    };
+
+    function normalizeKnownSource(source) {
+      const key = String(source || '').trim().toLowerCase();
+      return SOURCE_NAME_MAP[key] ? key : '';
+    }
+
+    function normalizeSource(source, fallback = 'cls') {
+      return normalizeKnownSource(source) || fallback;
+    }
+
+    function sourceName(source, fallbackName) {
+      const key = normalizeSource(source, '');
+      return String(fallbackName || '').trim() || SOURCE_NAME_MAP[key] || '未知来源';
+    }
+
+    function sourceClass(source) {
+      const key = normalizeSource(source, '');
+      if (['cls', 'eastmoney', 'sina', 'wscn', 'ths'].includes(key)) return `source-${key}`;
+      return 'source-other';
+    }
+
+    function itemKey(item) {
+      if (item && item.uid) return String(item.uid);
+      const source = normalizeSource(item && item.source);
+      const id = item && item.id !== undefined ? String(item.id) : '';
+      if (!id) return '';
+      return `${source}:${id}`;
+    }
+
+    function normalizeItem(raw) {
+      if (!raw || typeof raw !== 'object') return null;
+      const source = normalizeSource(raw.source);
+      const id = raw.id !== undefined && raw.id !== null ? String(raw.id).trim() : '';
+      const text = String(raw.text || '').trim();
+      if (!id || !text) return null;
+      const ctime = Number(raw.ctime);
+      return {
+        uid: itemKey({ uid: raw.uid, source, id }),
+        source,
+        sourceName: sourceName(source, raw.sourceName),
+        id,
+        ctime: Number.isFinite(ctime) ? ctime : 0,
+        time: String(raw.time || '').trim(),
+        title: String(raw.title || '').trim(),
+        text,
+        author: String(raw.author || '').trim(),
+        level: String(raw.level || '').trim(),
+        url: String(raw.url || '').trim(),
+      };
+    }
+
+    function normalizeTitleForDedupe(title) {
+      return String(title || '')
+        .toLowerCase()
+        .replace(/[^\u4e00-\u9fa5a-z0-9%]+/gi, '')
+        .trim();
+    }
+
+    function dedupeListByExactTitle(items, windowSec = 30 * 60) {
+      const out = [];
+      const recentByTitle = new Map();
+
+      for (const item of items) {
+        const key = normalizeTitleForDedupe(item && item.title);
+        const ctime = Number(item && item.ctime) || 0;
+
+        if (!key || key.length < 8) {
+          out.push(item);
+          continue;
+        }
+
+        const prev = recentByTitle.get(key);
+        if (!prev) {
+          recentByTitle.set(key, ctime);
+          out.push(item);
+          continue;
+        }
+
+        const dt = Math.abs(ctime - prev);
+        if (dt <= windowSec || !ctime || !prev) {
+          continue;
+        }
+
+        recentByTitle.set(key, ctime);
+        out.push(item);
+      }
+
+      return out;
+    }
+
+    function hasExactTitleDuplicate(item, items, windowSec = 30 * 60, maxScan = 500) {
+      const key = normalizeTitleForDedupe(item && item.title);
+      if (!key || key.length < 8) return false;
+      const ctime = Number(item && item.ctime) || 0;
+
+      const size = Math.min(maxScan, items.length);
+      for (let i = 0; i < size; i += 1) {
+        const it = items[i];
+        if (!it || it.uid === item.uid) continue;
+        const key2 = normalizeTitleForDedupe(it.title);
+        if (key !== key2) continue;
+        const c2 = Number(it.ctime) || 0;
+        const dt = Math.abs(ctime - c2);
+        if (dt <= windowSec || !ctime || !c2) return true;
+      }
+      return false;
+    }
+
+    function nowText() {
+      return new Date().toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function showToast(msg) {
+      el.toast.textContent = msg;
+      el.toast.classList.add('show');
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => el.toast.classList.remove('show'), 1600);
+    }
+
+    function setStatus(type, text) {
+      el.dot.className = 'dot';
+      if (type === 'ok') el.dot.classList.add('ok');
+      if (type === 'err') el.dot.classList.add('err');
+      if (type === 'run') el.dot.classList.add('run');
+      el.statusText.textContent = text;
+    }
+
+    function escapeHTML(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function highlight(text, keyword) {
+      let out = escapeHTML(text);
+      if (!keyword) return out;
+      const parts = keyword.split(',').map(s => s.trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+      for (const p of parts) {
+        const safe = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        out = out.replace(new RegExp(safe, 'gi'), m => `<mark>${m}</mark>`);
+      }
+      return out;
+    }
+
+    function passFilter(item) {
+      if (state.sourceFilter !== 'all' && normalizeSource(item.source, '') !== state.sourceFilter) {
+        return false;
+      }
+
+      const keyword = state.keyword.trim();
+      if (!keyword) return true;
+      const parts = keyword.split(',').map(s => s.trim()).filter(Boolean);
+      if (!parts.length) return true;
+      const target = `${item.title || ''} ${item.text || ''}`;
+      return parts.some(k => target.includes(k));
+    }
+
+    function levelClass(level) {
+      const lv = String(level || '').trim().toUpperCase();
+      if (lv.startsWith('A')) return 'a';
+      if (lv.startsWith('B')) return 'b';
+      if (lv.startsWith('C')) return 'c';
+      return 'n';
+    }
+
+    function levelText(level) {
+      const lv = String(level || '').trim().toUpperCase();
+      return lv || '-';
+    }
+
+    function save() {
+      const payload = {
+        v: 2,
+        list: state.list.slice(0, MAX_ITEMS),
+        expanded: Array.from(state.expanded).slice(0, MAX_ITEMS),
+        sourceFilter: state.sourceFilter,
+        sidebarCollapsed: Boolean(state.sidebarCollapsed),
+      };
+      localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+    }
+
+    function cleanupExpandedState() {
+      if (!state.expanded.size || !state.list.length) return false;
+      const valid = new Set(state.list.map(it => it.uid));
+      let changed = false;
+      for (const uid of Array.from(state.expanded)) {
+        if (!valid.has(uid)) {
+          state.expanded.delete(uid);
+          changed = true;
+        }
+      }
+      return changed;
+    }
+
+    function load() {
+      try {
+        const rawV2 = localStorage.getItem(STORE_KEY);
+        const rawV1 = localStorage.getItem('cls_auto_telegraph_feed_v1');
+
+        let parsed = null;
+        if (rawV2) {
+          const data = JSON.parse(rawV2);
+          if (Array.isArray(data)) {
+            parsed = { list: data };
+          } else if (data && typeof data === 'object' && Array.isArray(data.list)) {
+            parsed = data;
+          }
+        } else if (rawV1) {
+          const oldList = JSON.parse(rawV1);
+          if (Array.isArray(oldList)) parsed = { list: oldList };
+        }
+
+        if (!parsed || !Array.isArray(parsed.list)) return;
+
+        const normalized = [];
+        const seen = new Set();
+
+        for (const row of parsed.list) {
+          const item = normalizeItem(row);
+          if (!item || !item.uid) continue;
+          if (seen.has(item.uid)) continue;
+          seen.add(item.uid);
+          normalized.push(item);
+        }
+
+        normalized.sort((a, b) => b.ctime - a.ctime || String(b.uid).localeCompare(String(a.uid)));
+        if (normalized.length > MAX_ITEMS) normalized.length = MAX_ITEMS;
+
+        state.list = dedupeListByExactTitle(normalized);
+        state.seen = seen;
+
+        if (Array.isArray(parsed.expanded)) {
+          state.expanded = new Set(parsed.expanded.map(x => String(x || '').trim()).filter(Boolean));
+        }
+        cleanupExpandedState();
+
+        if (parsed.sourceFilter === 'all' || SOURCE_NAME_MAP[parsed.sourceFilter]) {
+          state.sourceFilter = parsed.sourceFilter;
+        }
+        if (typeof parsed.sidebarCollapsed === 'boolean') {
+          state.sidebarCollapsed = parsed.sidebarCollapsed;
+        }
+      } catch (_) {}
+    }
+
+    function merge(newItems) {
+      let added = 0;
+      for (let i = newItems.length - 1; i >= 0; i -= 1) {
+        const item = normalizeItem(newItems[i]);
+        if (!item || !item.uid) continue;
+        if (state.seen.has(item.uid)) continue;
+        if (hasExactTitleDuplicate(item, state.list)) {
+          state.seen.add(item.uid);
+          continue;
+        }
+        state.seen.add(item.uid);
+        state.list.unshift(item);
+        added += 1;
+      }
+      state.list = dedupeListByExactTitle(state.list);
+      if (state.list.length > MAX_ITEMS) state.list.length = MAX_ITEMS;
+      const expandedChanged = cleanupExpandedState();
+      if (added > 0 || expandedChanged) save();
+      return added;
+    }
+
+    function render() {
+      const list = state.list.filter(it => passFilter(it));
+      el.statTotal.textContent = String(state.list.length);
+      el.statVisible.textContent = String(list.length);
+
+      if (!list.length) {
+        el.feed.innerHTML = '<div class="empty">暂无数据，点击“立即刷新”或等待自动同步。</div>';
+        return;
+      }
+
+      el.feed.innerHTML = list.map((item) => {
+        const lvClass = levelClass(item.level);
+        const lvText = levelText(item.level);
+        const hasTitle = Boolean(String(item.title || '').trim());
+        const hasBody = Boolean(String(item.text || '').trim());
+        const bodyHtml = hasBody ? `<div class="text">${highlight(item.text || '', state.keyword)}</div>` : '';
+        const expandedAttr = state.expanded.has(item.uid) ? ' open' : '';
+        const contentHtml = hasTitle
+          ? (hasBody
+            ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>展开全文</summary>${bodyHtml}</details>`
+            : '')
+          : bodyHtml;
+        return `
+          <article class="item level-${lvClass}">
+            <div class="item-head">
+              <span>
+                <span class="source-badge ${sourceClass(item.source)}">${escapeHTML(sourceName(item.source, item.sourceName))}</span>
+                ${escapeHTML(item.time || '--:--:--')}
+                <span class="lv lv-${lvClass}">L${escapeHTML(lvText)}</span>
+              </span>
+            </div>
+            ${item.title ? `<div class="title-row">${highlight(item.title, state.keyword)}</div>` : ''}
+            ${contentHtml}
+            <div class="meta">
+              ${item.author ? `<span>来源：${escapeHTML(item.author)}</span>` : ''}
+              ${item.id ? `<span>ID：${escapeHTML(String(item.id))}</span>` : ''}
+              ${item.url ? `<span><a href="${escapeHTML(item.url)}" target="_blank" rel="noopener noreferrer">原文</a></span>` : ''}
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function formatSourcesInfo(sources) {
+      if (!Array.isArray(sources) || !sources.length) return '';
+      const parts = [];
+      for (const s of sources) {
+        const source = normalizeSource(s && s.source, '');
+        const name = sourceName(source, s && s.sourceName);
+        if (s && s.ok) {
+          parts.push(`${name}✓${Number(s.count) || 0}`);
+        } else {
+          parts.push(`${name}✗`);
+        }
+      }
+      return parts.join(' / ');
+    }
+
+    function applySidebarState() {
+      el.app.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+      el.btnSidebar.textContent = state.sidebarCollapsed ? '展开面板' : '折叠面板';
+      el.btnSidebarFloat.classList.toggle('show', state.sidebarCollapsed);
+    }
+
+    async function syncOnce() {
+      if (state.loading) return;
+      state.loading = true;
+      setStatus('run', '同步中...');
+
+      try {
+        const url = `/api/telegraph?limit=${encodeURIComponent(String(state.limit))}`;
+        const resp = await fetch(url, { cache: 'no-store' });
+        const data = await resp.json();
+
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || `http_${resp.status}`);
+        }
+
+        const items = Array.isArray(data.items) ? data.items : [];
+        const added = merge(items);
+        const sourceInfo = formatSourcesInfo(data.sources);
+
+        el.updated.textContent = `最近更新 ${nowText()}`;
+        el.lastSync.textContent = `上次更新：${nowText()}`;
+        el.apiInfo.textContent = `接口：/api/telegraph（返回 ${items.length} 条${data.cached ? '，缓存' : ''}${sourceInfo ? `；${sourceInfo}` : ''}）`;
+
+        if (added > 0) {
+          showToast(`新增 ${added} 条`);
+        }
+
+        setStatus('ok', state.auto ? '自动刷新中' : '已手动更新');
+        state.lastError = '';
+        if (added > 0) {
+          render();
+        }
+      } catch (err) {
+        const msg = err && err.message ? err.message : 'unknown_error';
+        state.lastError = msg;
+        setStatus('err', `同步失败：${msg}`);
+        el.lastSync.textContent = `上次更新：${nowText()}（失败）`;
+        showToast(`同步失败：${msg}`);
+      } finally {
+        state.loading = false;
+      }
+    }
+
+    function restartTimer() {
+      if (state.timer) {
+        clearInterval(state.timer);
+        state.timer = null;
+      }
+      if (!state.auto) return;
+      const ms = Math.max(3, Math.min(120, state.intervalSec)) * 1000;
+      state.timer = setInterval(syncOnce, ms);
+    }
+
+    function bind() {
+      el.btnToggle.addEventListener('click', () => {
+        state.auto = !state.auto;
+        el.btnToggle.classList.toggle('active', state.auto);
+        el.btnToggle.textContent = `自动刷新: ${state.auto ? '开' : '关'}`;
+        restartTimer();
+        setStatus('ok', state.auto ? '自动刷新中' : '自动刷新已关闭');
+      });
+
+      el.btnRefresh.addEventListener('click', syncOnce);
+
+      el.btnCompact.addEventListener('click', () => {
+        state.compact = !state.compact;
+        el.feedWrap.classList.toggle('compact', state.compact);
+        el.btnCompact.classList.toggle('active', state.compact);
+      });
+
+      el.btnClear.addEventListener('click', () => {
+        if (!confirm('确认清空本地缓存的所有电报吗？')) return;
+        state.list = [];
+        state.seen.clear();
+        state.expanded.clear();
+        save();
+        render();
+        showToast('已清空缓存');
+      });
+
+      el.interval.addEventListener('change', () => {
+        const n = Number(el.interval.value);
+        state.intervalSec = Number.isFinite(n) ? Math.max(3, Math.min(120, Math.floor(n))) : 8;
+        el.interval.value = String(state.intervalSec);
+        restartTimer();
+      });
+
+      el.limit.addEventListener('change', () => {
+        const n = Number(el.limit.value);
+        state.limit = Number.isFinite(n) ? Math.max(20, Math.min(500, Math.floor(n))) : 120;
+        el.limit.value = String(state.limit);
+      });
+
+      el.keyword.addEventListener('input', () => {
+        state.keyword = el.keyword.value.trim();
+        render();
+      });
+
+      el.sourceFilter.addEventListener('change', () => {
+        const selected = String(el.sourceFilter.value || '').trim().toLowerCase();
+        state.sourceFilter = selected === 'all' ? 'all' : normalizeSource(selected, 'all');
+        save();
+        render();
+      });
+
+      el.feed.addEventListener('toggle', (evt) => {
+        const target = evt.target;
+        if (!target || target.tagName !== 'DETAILS') return;
+        if (!target.classList.contains('expand-wrap')) return;
+        const uid = String(target.dataset.uid || '').trim();
+        if (!uid) return;
+        if (target.open) state.expanded.add(uid);
+        else state.expanded.delete(uid);
+        save();
+      }, true);
+
+      el.btnSidebar.addEventListener('click', () => {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        applySidebarState();
+        save();
+      });
+
+      el.btnSidebarFloat.addEventListener('click', () => {
+        state.sidebarCollapsed = false;
+        applySidebarState();
+        save();
+      });
+    }
+
+    function init() {
+      load();
+      el.sourceFilter.value = state.sourceFilter;
+      applySidebarState();
+      bind();
+      render();
+      restartTimer();
+      syncOnce();
+    }
+
+    init();
+  </script>
+</body>
+</html>
