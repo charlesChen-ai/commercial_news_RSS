@@ -581,12 +581,26 @@
     }
 
     .cluster-row {
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
       border-radius: 10px;
       border: 1px solid rgba(17, 17, 17, 0.08);
       background: rgba(17, 17, 17, 0.03);
       padding: 6px 8px;
       font-size: 12px;
       color: #4b5563;
+    }
+
+    .cluster-row:hover {
+      border-color: rgba(109, 40, 217, 0.3);
+      background: rgba(109, 40, 217, 0.07);
+    }
+
+    .cluster-row:active {
+      transform: scale(0.998);
     }
 
     .cluster-row-head {
@@ -619,6 +633,11 @@
       color: #4b5563;
       line-height: 1.5;
       word-break: break-word;
+    }
+
+    .item.jump-highlight {
+      box-shadow: 0 0 0 2px rgba(109, 40, 217, 0.24), 0 8px 18px rgba(0, 0, 0, 0.08);
+      transition: box-shadow .2s ease;
     }
 
     .ai-btn {
@@ -1610,6 +1629,65 @@
       return null;
     }
 
+    function highlightJumpTarget(card) {
+      if (!card) return;
+      card.classList.add('jump-highlight');
+      clearTimeout(highlightJumpTarget.timer);
+      highlightJumpTarget.timer = setTimeout(() => {
+        card.classList.remove('jump-highlight');
+      }, 1400);
+    }
+
+    function scrollToCardByUid(uid) {
+      const card = findCardByUid(uid);
+      if (!card) return false;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      highlightJumpTarget(card);
+      return true;
+    }
+
+    function jumpToItem(uid) {
+      const target = state.list.find(it => String(it && it.uid) === String(uid || ''));
+      if (!target) {
+        showToast('未找到对应电报');
+        return;
+      }
+
+      let changed = false;
+      if (state.topSection !== 'realtime') {
+        state.topSection = 'realtime';
+        applyTopSectionState();
+        changed = true;
+      }
+      if (state.aggregateMode) {
+        state.aggregateMode = false;
+        applyAggregateState();
+        changed = true;
+      }
+      if (!matchesSourceFilter(target)) {
+        state.sourceFilter = 'all';
+        el.sourceFilter.value = 'all';
+        changed = true;
+      }
+      if (!matchesKeywordFilter(target) && state.keyword.trim()) {
+        state.keyword = '';
+        el.keyword.value = '';
+        changed = true;
+      }
+
+      if (changed) {
+        save();
+        render();
+      }
+
+      if (scrollToCardByUid(uid)) return;
+      requestAnimationFrame(() => {
+        if (!scrollToCardByUid(uid)) {
+          showToast('未能定位到该电报');
+        }
+      });
+    }
+
     function updateCardAnalysisUI(uid) {
       const card = findCardByUid(uid);
       if (!card) return;
@@ -1690,13 +1768,13 @@
         const raw = String((it && it.title) || (it && it.text) || '').replace(/\s+/g, ' ').trim();
         const preview = raw.length > 110 ? `${raw.slice(0, 110)}...` : raw;
         return `
-          <div class="cluster-row">
+          <button class="cluster-row" type="button" data-action="jump-item" data-uid="${escapeHTML(String(it && it.uid ? it.uid : ''))}">
             <div class="cluster-row-head">
               <span class="cluster-row-time">${escapeHTML(String(it && it.time ? it.time : '--:--:--'))}</span>
               <span class="cluster-row-source">${escapeHTML(sourceName(it && it.source, it && it.sourceName))}</span>
             </div>
             <div class="cluster-row-text">${highlight(preview, state.keyword)}</div>
-          </div>
+          </button>
         `;
       }).join('');
 
@@ -1719,11 +1797,13 @@
       const hasTitle = Boolean(String(item.title || '').trim());
       const hasBody = Boolean(String(item.text || '').trim());
       const bodyHtml = hasBody ? `<div class="text">${highlight(item.text || '', state.keyword)}</div>` : '';
-      const expandedAttr = state.expanded.has(item.uid) ? ' open' : '';
+      const isExpanded = state.expanded.has(item.uid);
+      const expandedAttr = isExpanded ? ' open' : '';
+      const expandLabel = isExpanded ? '收起全文' : '展开全文';
       const clusterExtraHtml = buildClusterExtraHtml(cluster);
       const contentHtml = hasTitle
         ? (hasBody
-          ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>展开全文</summary>${bodyHtml}</details>`
+          ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>${expandLabel}</summary>${bodyHtml}</details>`
           : '')
         : bodyHtml;
 
@@ -2065,6 +2145,14 @@
       });
 
       el.feed.addEventListener('click', (evt) => {
+        const jumpRow = evt.target && evt.target.closest ? evt.target.closest('button[data-action="jump-item"]') : null;
+        if (jumpRow) {
+          const uid = String(jumpRow.dataset.uid || '').trim();
+          if (!uid) return;
+          jumpToItem(uid);
+          return;
+        }
+
         const btn = evt.target && evt.target.closest ? evt.target.closest('button[data-action="ai-analyze"]') : null;
         if (!btn) return;
         const uid = String(btn.dataset.uid || '').trim();
@@ -2078,6 +2166,10 @@
         if (!target.classList.contains('expand-wrap')) return;
         const uid = String(target.dataset.uid || '').trim();
         if (!uid) return;
+        const summary = target.querySelector('summary');
+        if (summary) {
+          summary.textContent = target.open ? '收起全文' : '展开全文';
+        }
         if (target.open) state.expanded.add(uid);
         else state.expanded.delete(uid);
         save();

@@ -44,10 +44,16 @@ final class APIClient {
     static let shared = APIClient()
 
     private let decoder = JSONDecoder()
-    private let session = URLSession(configuration: .ephemeral)
+    private let session: URLSession
     private let localAggregator = LocalTelegraphAggregator()
 
-    private init() {}
+    private init() {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 12
+        config.timeoutIntervalForResource = 18
+        config.waitsForConnectivity = false
+        session = URLSession(configuration: config)
+    }
 
     func fetchTelegraph(baseURL: String, limit: Int, sources: [NewsSource]) async throws -> TelegraphResponse {
         if isLocalMode(baseURL: baseURL) {
@@ -206,9 +212,6 @@ final class APIClient {
     private func isLocalMode(baseURL: String) -> Bool {
         let raw = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if raw.isEmpty || raw == "local" || raw.hasPrefix("app://local") {
-            return true
-        }
-        if raw.contains("://localhost") || raw.contains("://127.0.0.1") {
             return true
         }
         return false

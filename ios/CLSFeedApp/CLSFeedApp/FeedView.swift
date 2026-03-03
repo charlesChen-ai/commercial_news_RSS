@@ -5,138 +5,117 @@ import UIKit
 
 struct FeedView: View {
     @EnvironmentObject private var settings: AppSettings
-    @StateObject private var viewModel = FeedViewModel()
-    @State private var showErrorAlert = false
+    @EnvironmentObject private var errorCenter: AppErrorCenter
+    @StateObject private var viewModel = FeedViewModel(scope: "home")
     @State private var showBackToTop = false
     @State private var showRecapSheet = false
     @State private var expandedClusterIDs: Set<String> = []
     @State private var selectedCluster: TelegraphCluster?
     @State private var topSection: FeedTopSection = .headline
-    @State private var topSectionSlideForward = true
+    @State private var cachedHeadlineClusters: [TelegraphCluster] = []
+    @State private var cachedRealtimeClusters: [TelegraphCluster] = []
+    @State private var cachedKeywordHitsByUID: [String: [String]] = [:]
+    @State private var cachedKeywordHitCount = 0
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemGroupedBackground)
+                TwitterTheme.surface
                     .ignoresSafeArea()
 
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        Color.clear
-                            .frame(height: 1)
-                            .id("feed_top_anchor")
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear.preference(
-                                        key: FeedScrollOffsetKey.self,
-                                        value: geo.frame(in: .named("feed_scroll")).minY
-                                    )
+                VStack(spacing: 0) {
+                    topChrome
+
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            Color.clear
+                                .frame(height: 1)
+                                .id("feed_top_anchor")
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: FeedScrollOffsetKey.self,
+                                            value: geo.frame(in: .named("feed_scroll")).minY
+                                        )
+                                    }
+                                )
+
+                            LazyVStack(spacing: 0) {
+                                if let err = viewModel.feedError, !err.isEmpty {
+                                    errorBanner(err)
+                                        .padding(.bottom, 8)
                                 }
-                            )
 
-                        LazyVStack(spacing: 14) {
-                            if let err = viewModel.feedError, !err.isEmpty {
-                                errorBanner(err)
-                            }
-
-                            topSectionSwitcher
-
-                            if viewModel.displayClusters.isEmpty, !viewModel.isLoading {
-                                emptyCard
-                            } else {
-                                topSectionContent
-                            }
-                        }
-                        .padding(.top, 10)
-                        .padding(.bottom, 20)
-                    }
-                    .coordinateSpace(name: "feed_scroll")
-                    .onPreferenceChange(FeedScrollOffsetKey.self) { y in
-                        let shouldShow = y < -420
-                        if shouldShow != showBackToTop {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showBackToTop = shouldShow
-                            }
-                        }
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if showBackToTop {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    proxy.scrollTo("feed_top_anchor", anchor: .top)
+                                if viewModel.pendingAIJobs > 0 {
+                                    retryQueueBanner
+                                        .padding(.bottom, 8)
                                 }
-                            } label: {
-                                Image(systemName: "arrow.up")
-                                    .font(.headline.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 38, height: 38)
-                                    .background(Color.black.opacity(0.7), in: Circle())
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.trailing, 16)
-                            .padding(.bottom, 18)
-                        }
-                    }
-                    .refreshable {
-                        await viewModel.refresh(using: settings)
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 28)
-                            .onEnded { value in
-                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                                guard abs(value.translation.width) > 56 else { return }
-                                if value.translation.width < 0 {
-                                    switchTopSection(to: .realtime)
+
+                                if viewModel.displayClusters.isEmpty, !viewModel.isLoading {
+                                    emptyCard
                                 } else {
-                                    switchTopSection(to: .headline)
+                                    topSectionContent
                                 }
                             }
-                    )
-                }
-            }
-            .navigationTitle("快讯信息流")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("筛选", selection: Binding(
-                            get: { viewModel.filter },
-                            set: { viewModel.setFilter($0) }
-                        )) {
-                            ForEach(FeedFilterOption.allCases) { option in
-                                Text(option.displayName).tag(option)
+                            .padding(.top, 4)
+                            .padding(.bottom, 20)
+                        }
+                        .coordinateSpace(name: "feed_scroll")
+                        .onPreferenceChange(FeedScrollOffsetKey.self) { y in
+                            let shouldShow = y < -420
+                            if shouldShow != showBackToTop {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showBackToTop = shouldShow
+                                }
                             }
                         }
-
-                        Button("今日复盘") {
-                            _ = viewModel.generateTodayRecap(force: false)
-                            showRecapSheet = true
+                        .overlay(alignment: .bottomTrailing) {
+                            if showBackToTop {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        proxy.scrollTo("feed_top_anchor", anchor: .top)
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.up")
+                                        .font(.headline.weight(.bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 38, height: 38)
+                                        .background(Color.black.opacity(0.7), in: Circle())
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.trailing, 16)
+                                .padding(.bottom, 18)
+                            }
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                            Text(viewModel.filter.displayName)
-                                .font(.subheadline.weight(.semibold))
+                        .refreshable {
+                            await viewModel.refresh(using: settings)
                         }
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 18)
+                                .onEnded { value in
+                                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                                    guard abs(value.translation.width) > 26 else { return }
+                                    if value.translation.width < 0 {
+                                        switchTopSection(to: .realtime)
+                                    } else {
+                                        switchTopSection(to: .headline)
+                                    }
+                                }
+                        )
                     }
-                }
-
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        settings.autoRefreshEnabled.toggle()
-                    } label: {
-                        Image(systemName: settings.autoRefreshEnabled ? "bolt.circle.fill" : "bolt.slash.circle")
-                            .foregroundStyle(settings.autoRefreshEnabled ? .blue : .secondary)
-                    }
-                    .accessibilityLabel(settings.autoRefreshEnabled ? "关闭自动刷新" : "开启自动刷新")
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
             .task {
+                // Top-right filter menu was removed; force default feed mode to avoid stale persisted filters.
+                viewModel.setFilter(.all)
+
                 if settings.autoRefreshEnabled {
                     viewModel.startAutoRefresh(using: settings)
                 } else {
-                    await viewModel.refresh(using: settings)
+                    await viewModel.refresh(using: settings, trigger: .startup)
                 }
+                recomputeSectionCaches()
             }
             .onDisappear {
                 viewModel.stopAutoRefresh()
@@ -152,12 +131,22 @@ struct FeedView: View {
                 guard settings.autoRefreshEnabled else { return }
                 viewModel.startAutoRefresh(using: settings)
             }
+            .onChange(of: viewModel.displayClusters) { _ in
+                recomputeSectionCaches()
+            }
+            .onChange(of: settings.keywordSubscriptions) { _ in
+                recomputeSectionCaches()
+            }
+            .onChange(of: viewModel.filter) { _ in
+                recomputeSectionCaches()
+            }
             .onChange(of: settings.selectedSourceCodes) { _ in
                 if settings.autoRefreshEnabled {
                     viewModel.startAutoRefresh(using: settings)
                 } else {
                     Task { await viewModel.refresh(using: settings) }
                 }
+                recomputeSectionCaches()
             }
             .onChange(of: settings.serverBaseURL) { _ in
                 if settings.autoRefreshEnabled {
@@ -165,16 +154,38 @@ struct FeedView: View {
                 } else {
                     Task { await viewModel.refresh(using: settings) }
                 }
+                recomputeSectionCaches()
+            }
+            .onChange(of: settings.offlineModeEnabled) { _ in
+                if settings.autoRefreshEnabled {
+                    viewModel.startAutoRefresh(using: settings)
+                } else {
+                    Task { await viewModel.refresh(using: settings) }
+                }
+                recomputeSectionCaches()
+            }
+            .onChange(of: settings.aiRetryQueueEnabled) { enabled in
+                guard enabled else { return }
+                Task { await viewModel.retryQueuedAnalyses(using: settings) }
             }
             .onChange(of: viewModel.aiError) { value in
                 if let value, !value.isEmpty {
-                    showErrorAlert = true
+                    errorCenter.showAlert(
+                        title: "AI 分析失败",
+                        message: value,
+                        source: "feed.ai"
+                    )
                 }
             }
-            .alert("AI 分析失败", isPresented: $showErrorAlert) {
-                Button("确定", role: .cancel) {}
-            } message: {
-                Text(viewModel.aiError ?? "未知错误")
+            .onChange(of: viewModel.feedError) { value in
+                if let value, !value.isEmpty {
+                    errorCenter.showBanner(
+                        title: "信息流刷新异常",
+                        message: value,
+                        source: "feed.refresh",
+                        level: .warning
+                    )
+                }
             }
             .sheet(isPresented: $showRecapSheet) {
                 recapSheet
@@ -188,140 +199,124 @@ struct FeedView: View {
         }
     }
 
-    private var headlineClusters: [TelegraphCluster] {
-        Array(
-            headlineBaseClusters
-                .prefix(12)
-        )
-    }
-
-    private var headlineBaseClusters: [TelegraphCluster] {
-        Array(
-            viewModel.displayClusters
-                .filter { ["A", "B"].contains($0.primary.level.uppercased()) }
-                .prefix(20)
-        )
-    }
-
-    private var keywordHitClusters: [TelegraphCluster] {
-        let keywords = settings.keywordList
-        if keywords.isEmpty { return [] }
-
-        return viewModel.displayClusters.filter { cluster in
-            !matchedKeywords(for: cluster, keywords: keywords).isEmpty
+    private var retryQueueBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .foregroundStyle(.orange)
+            Text("AI 待重试任务 \(viewModel.pendingAIJobs) 条")
+                .font(.footnote.weight(.semibold))
+            Spacer(minLength: 8)
+            Button("立即重试") {
+                Task { await viewModel.retryQueuedAnalyses(using: settings) }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(TwitterTheme.surface)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .overlay(TwitterTheme.divider)
+        }
+    }
+
+    private var topChrome: some View {
+        topSectionSwitcher
+        .background(TwitterTheme.surface)
+    }
+
+    private var headlineClusters: [TelegraphCluster] {
+        cachedHeadlineClusters
     }
 
     private var realtimeClusters: [TelegraphCluster] {
-        let base = viewModel.displayClusters
-        let keywordUIDs = Set(keywordHitClusters.map(\.primary.uid))
-        let matched = base.filter { keywordUIDs.contains($0.primary.uid) }
-        let others = base.filter { !keywordUIDs.contains($0.primary.uid) }
-        return matched + others
+        cachedRealtimeClusters
     }
 
     private var topSectionSwitcher: some View {
-        HStack(spacing: 10) {
-            topSectionButton(.headline, title: "头条", icon: "flame.fill")
-            topSectionButton(.realtime, title: "实时流", icon: "bolt.horizontal.fill")
-            Spacer(minLength: 8)
-            Text("左右滑动切换")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                topSectionButton(.headline, title: "头条")
+                topSectionButton(.realtime, title: "实时流")
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 0)
+
+            Divider()
+                .overlay(TwitterTheme.divider)
         }
-        .padding(.horizontal, 12)
+        .background(TwitterTheme.surface)
     }
 
-    private func topSectionButton(_ section: FeedTopSection, title: String, icon: String) -> some View {
+    private func topSectionButton(_ section: FeedTopSection, title: String) -> some View {
         let selected = topSection == section
         return Button {
             switchTopSection(to: section)
         } label: {
-            Label(title, systemImage: icon)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(selected ? .white : .primary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    selected ? Color.blue : Color(uiColor: .secondarySystemBackground),
-                    in: Capsule()
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(Color.black.opacity(selected ? 0 : 0.08), lineWidth: selected ? 0 : 1)
-                )
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(selected ? .bold : .semibold))
+                    .foregroundStyle(selected ? .primary : .secondary)
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(selected ? TwitterTheme.accent : .clear)
+                    .frame(width: 84, height: 3)
+            }
+            .frame(maxWidth: .infinity, minHeight: 40)
         }
         .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private var topSectionContent: some View {
-        ZStack {
+        Group {
             if topSection == .headline {
                 headlineSectionView
-                    .transition(sectionTransition)
-            }
-            if topSection == .realtime {
+                    .id("headline_section")
+            } else {
                 realtimeSectionView
-                    .transition(sectionTransition)
+                    .id("realtime_section")
             }
         }
-        .clipped()
-    }
-
-    private var sectionTransition: AnyTransition {
-        if topSectionSlideForward {
-            return .asymmetric(
-                insertion: .move(edge: .trailing),
-                removal: .move(edge: .leading)
-            )
-        }
-
-        return .asymmetric(
-            insertion: .move(edge: .leading),
-            removal: .move(edge: .trailing)
-        )
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private var headlineSectionView: some View {
-        sectionCard(
-            title: "头条",
-            subtitle: "A/B级优先快讯（聚合优先展示）",
-            icon: "flame.fill",
-            tint: .red
-        ) {
+        VStack(alignment: .leading, spacing: 0) {
             if headlineClusters.isEmpty {
                 Text("当前暂无头条快讯")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
             } else {
                 ForEach(headlineClusters) { cluster in
                     clusterCell(
                         cluster,
-                        keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList),
+                        keywordHits: cachedKeywordHitsByUID[cluster.primary.uid] ?? [],
                         allowEventDetail: false
                     )
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var realtimeSectionView: some View {
-        sectionCard(
-            title: "实时流",
-            subtitle: "全等级快讯按时间持续更新",
-            icon: "bolt.horizontal.fill",
-            tint: .blue
-        ) {
-            if !keywordHitClusters.isEmpty {
+        VStack(alignment: .leading, spacing: 0) {
+            if cachedKeywordHitCount > 0 {
                 HStack(spacing: 8) {
                     Image(systemName: "bell.badge.fill")
                         .foregroundStyle(.orange)
-                    Text("关注命中 \(keywordHitClusters.count) 条，已优先置顶")
+                    Text("关注命中 \(cachedKeywordHitCount) 条，已优先置顶")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .overlay(alignment: .bottom) {
+                    Divider().overlay(TwitterTheme.divider)
                 }
             }
 
@@ -329,24 +324,76 @@ struct FeedView: View {
                 Text("暂无更多实时流内容")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
             } else {
                 ForEach(realtimeClusters) { cluster in
                     clusterCell(
                         cluster,
-                        keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList),
+                        keywordHits: cachedKeywordHitsByUID[cluster.primary.uid] ?? [],
                         allowEventDetail: true
                     )
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func switchTopSection(to next: FeedTopSection) {
         guard next != topSection else { return }
-        topSectionSlideForward = (topSection == .headline && next == .realtime)
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+        withAnimation(.easeOut(duration: 0.14)) {
             topSection = next
+        }
+    }
+
+    private func recomputeSectionCaches() {
+        let base = viewModel.displayClusters
+        let headlineBase = base
+            .filter { ["A", "B"].contains($0.primary.level.uppercased()) }
+            .prefix(20)
+        cachedHeadlineClusters = Array(headlineBase.prefix(12))
+
+        let keywords = settings.keywordList
+        guard !keywords.isEmpty else {
+            cachedKeywordHitsByUID = [:]
+            cachedKeywordHitCount = 0
+            cachedRealtimeClusters = base
+            return
+        }
+
+        var hitMap: [String: [String]] = [:]
+        var hitUIDs = Set<String>()
+
+        for cluster in base {
+            let hits = matchedKeywords(for: cluster, keywords: keywords)
+            if !hits.isEmpty {
+                hitMap[cluster.primary.uid] = hits
+                hitUIDs.insert(cluster.primary.uid)
+            }
+        }
+
+        cachedKeywordHitsByUID = hitMap
+        let matched = base.filter { hitUIDs.contains($0.primary.uid) }
+        cachedKeywordHitCount = matched.count
+        if matched.isEmpty {
+            cachedRealtimeClusters = base
+            normalizeTopSectionIfNeeded()
+            return
+        }
+
+        let others = base.filter { !hitUIDs.contains($0.primary.uid) }
+        cachedRealtimeClusters = matched + others
+        normalizeTopSectionIfNeeded()
+    }
+
+    private func normalizeTopSectionIfNeeded() {
+        if topSection == .headline, cachedHeadlineClusters.isEmpty, !cachedRealtimeClusters.isEmpty {
+            topSection = .realtime
+            return
+        }
+
+        if topSection == .realtime, cachedRealtimeClusters.isEmpty, !cachedHeadlineClusters.isEmpty {
+            topSection = .headline
         }
     }
 
@@ -365,31 +412,10 @@ struct FeedView: View {
         return hits
     }
 
-    private func sectionCard<Content: View>(
-        title: String,
-        subtitle: String,
-        icon: String,
-        tint: Color,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Label(title, systemImage: icon)
-                    .font(.headline)
-                    .foregroundStyle(tint)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-
-            content()
-        }
-        .padding(.horizontal, 12)
-    }
-
     private func clusterCell(_ cluster: TelegraphCluster, keywordHits: [String], allowEventDetail: Bool) -> some View {
-        VStack(spacing: 8) {
+        let showMetaRow = !keywordHits.isEmpty || (allowEventDetail && cluster.isMerged)
+
+        return VStack(spacing: 8) {
             TelegraphCardView(
                 item: cluster.primary,
                 workflow: viewModel.workflowState(for: cluster.primary),
@@ -405,36 +431,38 @@ struct FeedView: View {
                 onToggleRead: { viewModel.toggleRead(uid: cluster.primary.uid) }
             )
 
-            HStack(spacing: 6) {
-                if !keywordHits.isEmpty {
-                    ForEach(keywordHits, id: \.self) { keyword in
-                        Text("#\(keyword)")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.12), in: Capsule())
+            if showMetaRow {
+                HStack(spacing: 6) {
+                    if !keywordHits.isEmpty {
+                        ForEach(keywordHits, id: \.self) { keyword in
+                            Text("#\(keyword)")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.12), in: Capsule())
+                        }
+                    }
+
+                    Spacer()
+
+                    if allowEventDetail, cluster.isMerged {
+                        Button {
+                            viewModel.markRead(uid: cluster.primary.uid)
+                            selectedCluster = cluster
+                        } label: {
+                            Label("事件详情", systemImage: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.06), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
                     }
                 }
-
-                Spacer()
-
-                if allowEventDetail, cluster.isMerged {
-                    Button {
-                        viewModel.markRead(uid: cluster.primary.uid)
-                        selectedCluster = cluster
-                    } label: {
-                        Label("事件详情", systemImage: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.06), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.primary)
-                }
+                .padding(.horizontal, 4)
             }
-            .padding(.horizontal, 4)
 
             if cluster.isMerged {
                 clusterFooter(cluster)
@@ -452,6 +480,11 @@ struct FeedView: View {
                     in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                 )
             }
+        }
+        .background(TwitterTheme.surface)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .overlay(TwitterTheme.divider)
         }
     }
 
@@ -566,17 +599,33 @@ struct FeedView: View {
     }
 
     private func errorBanner(_ text: String) -> some View {
-        Text(text)
-            .font(.footnote)
-            .foregroundStyle(.red)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.red.opacity(0.2), lineWidth: 1)
-            )
-            .padding(.horizontal, 12)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                if let lastAt = viewModel.lastSuccessfulRefreshAt {
+                    Text("上次成功：\(lastAt.formatted(date: .omitted, time: .standard))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("重试") {
+                    Task { await viewModel.refresh(using: settings, trigger: .manual) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.red.opacity(0.2), lineWidth: 1)
+        )
+        .padding(.horizontal, 12)
     }
 
     private var emptyCard: some View {

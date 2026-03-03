@@ -27,15 +27,15 @@ struct TelegraphCardView: View {
     }
 
     private var analyzeForegroundColor: Color {
-        Color.blue.opacity(0.86)
+        TwitterTheme.accent
     }
 
     private var analyzeBackgroundColor: Color {
-        analysis == nil ? Color.blue.opacity(0.14) : Color.blue.opacity(0.2)
+        analysis == nil ? TwitterTheme.accent.opacity(0.12) : TwitterTheme.accent.opacity(0.18)
     }
 
     private var analyzeBorderColor: Color {
-        analysis == nil ? Color.blue.opacity(0.25) : Color.blue.opacity(0.32)
+        analysis == nil ? TwitterTheme.accent.opacity(0.22) : TwitterTheme.accent.opacity(0.30)
     }
 
     var body: some View {
@@ -50,21 +50,9 @@ struct TelegraphCardView: View {
                 analysisPanel(analysis)
             }
         }
-        .padding(12)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.black.opacity(workflow.isPinned ? 0.22 : 0.14), lineWidth: workflow.isPinned ? 1.5 : 1.2)
-        )
-        .overlay(alignment: .leading) {
-            if let sideAccentColor {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(sideAccentColor)
-                    .frame(width: 3.5)
-                    .padding(.vertical, 9)
-            }
-        }
-        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(TwitterTheme.surface)
         .opacity(workflow.isRead ? 0.95 : 1)
     }
 
@@ -79,10 +67,7 @@ struct TelegraphCardView: View {
 
             Text(item.sourceName)
                 .font(.caption.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.blue.opacity(0.12), in: Capsule())
-                .foregroundStyle(.blue)
+                .foregroundStyle(TwitterTheme.accent)
         }
     }
 
@@ -106,6 +91,10 @@ struct TelegraphCardView: View {
                 .foregroundStyle(.primary)
                 .lineSpacing(2)
                 .lineLimit(expandText ? nil : 5)
+        } else {
+            Text("（内容获取中）")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -119,10 +108,7 @@ struct TelegraphCardView: View {
             } label: {
                 Label(expandText ? "收起全文" : "展开全文", systemImage: expandText ? "chevron.up" : "chevron.down")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.blue)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.blue.opacity(0.08), in: Capsule())
+                    .foregroundStyle(TwitterTheme.accent)
             }
             .buttonStyle(.plain)
         }
@@ -146,7 +132,7 @@ struct TelegraphCardView: View {
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(Color.black.opacity(0.05), in: Capsule())
+                        .background(TwitterTheme.subtle, in: Capsule())
                     }
                 }
                 .padding(.vertical, 2)
@@ -199,7 +185,7 @@ struct TelegraphCardView: View {
                             .font(.caption.weight(.semibold))
                     }
                     Text(isAnalyzing ? "分析中" : (analysis == nil ? "AI 分析" : "重分析"))
-                        .font(.caption.weight(.semibold))
+                        .font(.caption.weight(.bold))
                 }
                 .foregroundStyle(analyzeForegroundColor)
                 .padding(.horizontal, 11)
@@ -221,11 +207,7 @@ struct TelegraphCardView: View {
             Image(systemName: icon)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(active ? tint : .secondary)
-                .frame(width: 30, height: 26)
-                .background(
-                    (active ? tint.opacity(0.16) : Color.black.opacity(0.05)),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
+                .frame(width: 28, height: 24)
         }
         .buttonStyle(.plain)
     }
@@ -314,10 +296,10 @@ struct TelegraphCardView: View {
             }
         }
         .padding(10)
-        .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(TwitterTheme.subtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                .stroke(TwitterTheme.divider, lineWidth: 1)
         )
     }
 
@@ -374,17 +356,6 @@ struct TelegraphCardView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-    }
-
-    private var sideAccentColor: Color? {
-        switch item.level.uppercased() {
-        case "A":
-            return Color.red.opacity(0.88)
-        case "B":
-            return Color.orange.opacity(0.82)
-        default:
-            return nil
         }
     }
 

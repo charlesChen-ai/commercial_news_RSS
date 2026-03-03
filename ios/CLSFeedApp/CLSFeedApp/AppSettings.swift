@@ -1,6 +1,6 @@
 import Foundation
 
-struct AIConfigSnapshot {
+struct AIConfigSnapshot: Codable, Hashable {
     let provider: AIProvider
     let apiKey: String
     let apiBase: String
@@ -13,6 +13,8 @@ final class AppSettings: ObservableObject {
         static let serverBaseURL = "app.serverBaseURL"
         static let refreshInterval = "app.refreshInterval"
         static let autoRefreshEnabled = "app.autoRefreshEnabled"
+        static let offlineModeEnabled = "app.offlineModeEnabled"
+        static let onboardingCompleted = "app.onboardingCompleted"
         static let keywordAlertEnabled = "app.keywordAlertEnabled"
         static let keywordSubscriptions = "app.keywordSubscriptions.items"
         static let keywordSubscriptionsLegacy = "app.keywordSubscriptions"
@@ -21,6 +23,7 @@ final class AppSettings: ObservableObject {
         static let aiApiBase = "app.aiApiBase"
         static let aiModel = "app.aiModel"
         static let aiApiKey = "app.aiApiKey"
+        static let aiRetryQueueEnabled = "app.aiRetryQueueEnabled"
     }
 
     @Published var serverBaseURL: String {
@@ -33,6 +36,14 @@ final class AppSettings: ObservableObject {
 
     @Published var autoRefreshEnabled: Bool {
         didSet { UserDefaults.standard.set(autoRefreshEnabled, forKey: Keys.autoRefreshEnabled) }
+    }
+
+    @Published var offlineModeEnabled: Bool {
+        didSet { UserDefaults.standard.set(offlineModeEnabled, forKey: Keys.offlineModeEnabled) }
+    }
+
+    @Published var onboardingCompleted: Bool {
+        didSet { UserDefaults.standard.set(onboardingCompleted, forKey: Keys.onboardingCompleted) }
     }
 
     @Published var keywordAlertEnabled: Bool {
@@ -60,16 +71,26 @@ final class AppSettings: ObservableObject {
     }
 
     @Published var aiApiKey: String {
-        didSet { KeychainHelper.save(key: Keys.aiApiKey, value: aiApiKey) }
+        didSet { _ = KeychainHelper.save(key: Keys.aiApiKey, value: aiApiKey) }
+    }
+
+    @Published var aiRetryQueueEnabled: Bool {
+        didSet { UserDefaults.standard.set(aiRetryQueueEnabled, forKey: Keys.aiRetryQueueEnabled) }
     }
 
     init() {
         let defaults = UserDefaults.standard
 
-        let server = "app://local"
-        defaults.set(server, forKey: Keys.serverBaseURL)
+        let defaultServer = "app://local"
+        let savedServer = defaults.string(forKey: Keys.serverBaseURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let server = (savedServer?.isEmpty == false) ? (savedServer ?? defaultServer) : defaultServer
+        if savedServer == nil || savedServer?.isEmpty == true {
+            defaults.set(defaultServer, forKey: Keys.serverBaseURL)
+        }
         let interval = defaults.object(forKey: Keys.refreshInterval) as? Double ?? 8
         let autoRefreshEnabled = defaults.object(forKey: Keys.autoRefreshEnabled) as? Bool ?? true
+        let offlineModeEnabled = defaults.object(forKey: Keys.offlineModeEnabled) as? Bool ?? false
         let keywordAlertEnabled = defaults.object(forKey: Keys.keywordAlertEnabled) as? Bool ?? false
 
         let savedSources = defaults.string(forKey: Keys.sources) ?? ""
@@ -81,12 +102,20 @@ final class AppSettings: ObservableObject {
         let apiBase = defaults.string(forKey: Keys.aiApiBase) ?? provider.defaultApiBase
         let model = defaults.string(forKey: Keys.aiModel) ?? provider.defaultModel
         let apiKey = KeychainHelper.read(key: Keys.aiApiKey)
+        let aiRetryQueueEnabled = defaults.object(forKey: Keys.aiRetryQueueEnabled) as? Bool ?? true
+        let hasExistingSetup =
+            defaults.object(forKey: Keys.serverBaseURL) != nil ||
+            defaults.object(forKey: Keys.aiProvider) != nil ||
+            !apiKey.isEmpty
+        let onboardingCompleted = defaults.object(forKey: Keys.onboardingCompleted) as? Bool ?? hasExistingSetup
 
         let loadedKeywords = Self.loadKeywordSubscriptions(defaults: defaults)
 
         self.serverBaseURL = server
-        self.refreshInterval = max(3, interval)
+        self.refreshInterval = max(1, interval)
         self.autoRefreshEnabled = autoRefreshEnabled
+        self.offlineModeEnabled = offlineModeEnabled
+        self.onboardingCompleted = onboardingCompleted
         self.keywordAlertEnabled = keywordAlertEnabled
         self.keywordSubscriptions = loadedKeywords
         self.selectedSourceCodes = parsedSources.isEmpty ? Set(NewsSource.allCases.map(\.rawValue)) : parsedSources
@@ -94,10 +123,18 @@ final class AppSettings: ObservableObject {
         self.aiApiBase = apiBase
         self.aiModel = model
         self.aiApiKey = apiKey
+        self.aiRetryQueueEnabled = aiRetryQueueEnabled
     }
 
     var selectedSources: [NewsSource] {
         NewsSource.allCases.filter { selectedSourceCodes.contains($0.rawValue) }
+    }
+
+    var effectiveServerBaseURL: String {
+        if offlineModeEnabled {
+            return "app://local"
+        }
+        return serverBaseURL
     }
 
     var aiSnapshot: AIConfigSnapshot {
@@ -181,9 +218,23 @@ final class AppSettings: ObservableObject {
         selectedSourceCodes = next
     }
 
+    func setSources(_ sources: Set<NewsSource>) {
+        let next = Set(sources.map(\.rawValue))
+        if next.isEmpty { return }
+        selectedSourceCodes = next
+    }
+
     func applyProviderPreset() {
         aiApiBase = aiProvider.defaultApiBase
         aiModel = aiProvider.defaultModel
+    }
+
+    func completeOnboarding() {
+        onboardingCompleted = true
+    }
+
+    func reopenOnboarding() {
+        onboardingCompleted = false
     }
 
     private func persistKeywordSubscriptions() {

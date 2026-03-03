@@ -1,19 +1,24 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ConsoleView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var errorCenter: AppErrorCenter
     @State private var sourceHealth: [SourceHealth] = []
     @State private var sourceHealthError: String?
     @State private var checkingSourceHealth = false
     @State private var sourceCheckedAt: Date?
     @State private var notificationStatusText = "未知"
     @State private var keywordInput = ""
+    @State private var pendingJobsCount = 0
     @FocusState private var keywordFieldFocused: Bool
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(uiColor: .systemGroupedBackground)
+                groupedBackgroundColor
                     .ignoresSafeArea()
 
                 ScrollView {
@@ -32,10 +37,13 @@ struct ConsoleView: View {
                 }
             }
             .navigationTitle("控制台")
+#if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+#endif
             .task {
                 await refreshSourceHealth()
                 await refreshNotificationStatus()
+                refreshPendingJobs()
             }
             .onChange(of: settings.aiProvider) { _ in
                 settings.applyProviderPreset()
@@ -43,8 +51,24 @@ struct ConsoleView: View {
             .onChange(of: settings.serverBaseURL) { _ in
                 Task { await refreshSourceHealth() }
             }
+            .onChange(of: settings.offlineModeEnabled) { _ in
+                Task { await refreshSourceHealth() }
+            }
             .onChange(of: settings.selectedSourceCodes) { _ in
                 Task { await refreshSourceHealth() }
+            }
+            .onChange(of: settings.aiRetryQueueEnabled) { _ in
+                refreshPendingJobs()
+            }
+            .onChange(of: sourceHealthError) { value in
+                if let value, !value.isEmpty {
+                    errorCenter.showBanner(
+                        title: "信息源状态检查失败",
+                        message: value,
+                        source: "console.sourceHealth",
+                        level: .warning
+                    )
+                }
             }
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
@@ -67,14 +91,21 @@ struct ConsoleView: View {
             }
 
             HStack {
+                Text("离线模式")
+                Spacer()
+                Toggle("", isOn: $settings.offlineModeEnabled)
+                    .labelsHidden()
+            }
+
+            HStack {
                 Text("刷新间隔")
                 Spacer()
                 Text("\(Int(settings.refreshInterval)) 秒")
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Slider(value: $settings.refreshInterval, in: 3...30, step: 1)
-            Text("服务地址已隐藏，当前使用 App 内置抓取模式。")
+            Slider(value: $settings.refreshInterval, in: 1...30, step: 1)
+            Text(serviceModeText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -136,6 +167,8 @@ struct ConsoleView: View {
 
     private var aiCard: some View {
         settingsCard(title: "AI 模型") {
+            Toggle("失败自动重试队列", isOn: $settings.aiRetryQueueEnabled)
+
             Picker("提供商", selection: $settings.aiProvider) {
                 ForEach(AIProvider.allCases) { provider in
                     Text(provider.displayName).tag(provider)
@@ -156,6 +189,25 @@ struct ConsoleView: View {
 
             platformTextField("Model", text: $settings.aiModel)
                 .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Text("待重试任务：\(pendingJobsCount)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("清空队列") {
+                    AIRetryQueueStore.shared.clearAll()
+                    refreshPendingJobs()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(pendingJobsCount == 0)
+            }
+
+            Button("重新打开初始化引导") {
+                settings.reopenOnboarding()
+            }
+            .buttonStyle(.bordered)
 
             Text("API Key 存在 Keychain 中；本地模式下由手机直接调用模型接口。")
                 .font(.footnote)
@@ -200,11 +252,7 @@ struct ConsoleView: View {
                             ))
                             .labelsHidden()
 
-                            TextField("关键词", text: keywordBinding(for: sub))
-                                .font(.subheadline)
-                                .textFieldStyle(.plain)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
+                            platformKeywordEditorField(text: keywordBinding(for: sub))
                                 .focused($keywordFieldFocused)
 #if os(iOS)
                                 .submitLabel(.done)
@@ -226,7 +274,7 @@ struct ConsoleView: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(tertiaryBackgroundColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                 }
             }
@@ -255,16 +303,17 @@ struct ConsoleView: View {
     private func settingsCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
             content()
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.black.opacity(0.05), lineWidth: 1)
-        )
+        .background(secondaryBackgroundColor)
+        .overlay(alignment: .bottom) {
+            Divider()
+                .overlay(TwitterTheme.divider)
+        }
     }
 
     private func sourceBinding(_ source: NewsSource) -> Binding<Bool> {
@@ -293,6 +342,18 @@ struct ConsoleView: View {
         }
     }
 
+    private var serviceModeText: String {
+        if settings.offlineModeEnabled {
+            return "运行模式：离线优先（强制本地抓取）"
+        }
+
+        let base = settings.effectiveServerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty || base == "local" || base.hasPrefix("app://local") {
+            return "运行模式：本地抓取（设备直连信息源与模型接口）"
+        }
+        return "运行模式：代理服务（\(base)）"
+    }
+
     @MainActor
     private func refreshSourceHealth() async {
         checkingSourceHealth = true
@@ -300,13 +361,14 @@ struct ConsoleView: View {
 
         do {
             let response = try await APIClient.shared.fetchTelegraph(
-                baseURL: settings.serverBaseURL,
+                baseURL: settings.effectiveServerBaseURL,
                 limit: 20,
                 sources: settings.selectedSources
             )
             sourceHealth = response.sources ?? []
             sourceHealthError = nil
             sourceCheckedAt = Date()
+            refreshPendingJobs()
         } catch {
             sourceHealthError = error.localizedDescription
         }
@@ -339,6 +401,10 @@ struct ConsoleView: View {
             get: { settings.keywordSubscriptions.first(where: { $0.id == sub.id })?.keyword ?? sub.keyword },
             set: { settings.updateKeywordSubscription(sub.id, keyword: $0) }
         )
+    }
+
+    private func refreshPendingJobs() {
+        pendingJobsCount = AIRetryQueueStore.shared.pendingCount
     }
 
     @MainActor
@@ -392,6 +458,50 @@ struct ConsoleView: View {
             .autocorrectionDisabled()
 #else
         SecureField(title, text: text)
+#endif
+    }
+
+    private func platformKeywordEditorField(text: Binding<String>) -> some View {
+#if os(iOS)
+        return TextField("关键词", text: text)
+            .font(.subheadline)
+            .textFieldStyle(.plain)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+#else
+        return TextField("关键词", text: text)
+            .font(.subheadline)
+            .textFieldStyle(.plain)
+#endif
+    }
+
+    private var groupedBackgroundColor: Color {
+#if os(iOS)
+        return TwitterTheme.surface
+#elseif os(macOS)
+        return Color(nsColor: .windowBackgroundColor)
+#else
+        return Color.gray.opacity(0.08)
+#endif
+    }
+
+    private var secondaryBackgroundColor: Color {
+#if os(iOS)
+        return TwitterTheme.surface
+#elseif os(macOS)
+        return Color(nsColor: .controlBackgroundColor)
+#else
+        return Color.gray.opacity(0.12)
+#endif
+    }
+
+    private var tertiaryBackgroundColor: Color {
+#if os(iOS)
+        return Color(uiColor: .tertiarySystemBackground)
+#elseif os(macOS)
+        return Color(nsColor: .underPageBackgroundColor)
+#else
+        return Color.gray.opacity(0.16)
 #endif
     }
 }

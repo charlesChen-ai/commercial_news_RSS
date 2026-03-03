@@ -23,6 +23,14 @@
 		A10000010000000000000010 /* QuoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000010 /* QuoteService.swift */; };
 		A10000010000000000000011 /* RecapGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000011 /* RecapGenerator.swift */; };
 		A10000010000000000000012 /* EventDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000012 /* EventDetailView.swift */; };
+		A10000010000000000000013 /* FeedPersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000013 /* FeedPersistenceStore.swift */; };
+		A10000010000000000000014 /* TelegraphClusterer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000014 /* TelegraphClusterer.swift */; };
+		A10000010000000000000015 /* AppErrorCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000015 /* AppErrorCenter.swift */; };
+		A10000010000000000000016 /* AIRetryQueueStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000016 /* AIRetryQueueStore.swift */; };
+		A10000010000000000000017 /* OnboardingSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000017 /* OnboardingSetupView.swift */; };
+		A10000010000000000000018 /* CoreSelfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000018 /* CoreSelfTests.swift */; };
+		A10000010000000000000019 /* TwitterTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10001010000000000000019 /* TwitterTheme.swift */; };
+		A1000001000000000000001A /* FavoritesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000101000000000000001A /* FavoritesView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +52,14 @@
 		A10001010000000000000010 /* QuoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuoteService.swift; sourceTree = "<group>"; };
 		A10001010000000000000011 /* RecapGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecapGenerator.swift; sourceTree = "<group>"; };
 		A10001010000000000000012 /* EventDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventDetailView.swift; sourceTree = "<group>"; };
+		A10001010000000000000013 /* FeedPersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedPersistenceStore.swift; sourceTree = "<group>"; };
+		A10001010000000000000014 /* TelegraphClusterer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelegraphClusterer.swift; sourceTree = "<group>"; };
+		A10001010000000000000015 /* AppErrorCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppErrorCenter.swift; sourceTree = "<group>"; };
+		A10001010000000000000016 /* AIRetryQueueStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRetryQueueStore.swift; sourceTree = "<group>"; };
+		A10001010000000000000017 /* OnboardingSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSetupView.swift; sourceTree = "<group>"; };
+		A10001010000000000000018 /* CoreSelfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreSelfTests.swift; sourceTree = "<group>"; };
+		A10001010000000000000019 /* TwitterTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwitterTheme.swift; sourceTree = "<group>"; };
+		A1000101000000000000001A /* FavoritesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,10 +90,18 @@
 				A10001010000000000000004 /* KeychainHelper.swift */,
 				A10001010000000000000005 /* AppSettings.swift */,
 				A10001010000000000000006 /* APIClient.swift */,
+				A10001010000000000000016 /* AIRetryQueueStore.swift */,
 				A10001010000000000000007 /* FeedViewModel.swift */,
+				A10001010000000000000013 /* FeedPersistenceStore.swift */,
+				A10001010000000000000014 /* TelegraphClusterer.swift */,
+				A10001010000000000000018 /* CoreSelfTests.swift */,
+				A10001010000000000000019 /* TwitterTheme.swift */,
 				A10001010000000000000008 /* FeedView.swift */,
+				A1000101000000000000001A /* FavoritesView.swift */,
 				A10001010000000000000009 /* TelegraphCardView.swift */,
 				A1000101000000000000000A /* ConsoleView.swift */,
+				A10001010000000000000017 /* OnboardingSetupView.swift */,
+				A10001010000000000000015 /* AppErrorCenter.swift */,
 				A1000101000000000000000D /* LocalTelegraphAggregator.swift */,
 				A1000101000000000000000F /* NotificationManager.swift */,
 				A10001010000000000000010 /* QuoteService.swift */,
@@ -172,10 +196,18 @@
 				A10000010000000000000004 /* KeychainHelper.swift in Sources */,
 				A10000010000000000000005 /* AppSettings.swift in Sources */,
 				A10000010000000000000006 /* APIClient.swift in Sources */,
+				A10000010000000000000016 /* AIRetryQueueStore.swift in Sources */,
 				A10000010000000000000007 /* FeedViewModel.swift in Sources */,
+				A10000010000000000000013 /* FeedPersistenceStore.swift in Sources */,
+				A10000010000000000000014 /* TelegraphClusterer.swift in Sources */,
+				A10000010000000000000018 /* CoreSelfTests.swift in Sources */,
+				A10000010000000000000019 /* TwitterTheme.swift in Sources */,
 				A10000010000000000000008 /* FeedView.swift in Sources */,
+				A1000001000000000000001A /* FavoritesView.swift in Sources */,
 				A10000010000000000000009 /* TelegraphCardView.swift in Sources */,
 				A1000001000000000000000A /* ConsoleView.swift in Sources */,
+				A10000010000000000000017 /* OnboardingSetupView.swift in Sources */,
+				A10000010000000000000015 /* AppErrorCenter.swift in Sources */,
 				A1000001000000000000000B /* LocalTelegraphAggregator.swift in Sources */,
 				A1000001000000000000000D /* NotificationManager.swift in Sources */,
 				A10000010000000000000010 /* QuoteService.swift in Sources */,

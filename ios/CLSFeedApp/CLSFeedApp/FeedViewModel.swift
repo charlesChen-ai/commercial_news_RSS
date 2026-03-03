@@ -18,72 +18,47 @@ final class FeedViewModel: ObservableObject {
     @Published var analysisByUID: [String: AIAnalysis] = [:]
     @Published var quoteByCode: [String: StockQuote] = [:]
     @Published var filter: FeedFilterOption = .all
+    @Published private(set) var displayClusters: [TelegraphCluster] = []
     @Published var latestRecapText: String = ""
+    @Published var lastSuccessfulRefreshAt: Date?
+    @Published var pendingAIJobs = 0
 
-    private let notifiedUIDStoreKey = "feed.notifiedUIDs"
-    private let pinnedStoreKey = "feed.pinnedUIDs"
-    private let starredStoreKey = "feed.starredUIDs"
-    private let laterStoreKey = "feed.laterUIDs"
-    private let readStoreKey = "feed.readUIDs"
-    private let filterStoreKey = "feed.filter"
-    private let latestItemsStoreKey = "feed.latestItems"
-    private let analysisCacheStoreKey = "feed.analysisCache"
-    private let recapCacheStoreKey = "feed.recapCache"
-
-    private var notifiedUIDs: Set<String>
-    private var pinnedUIDs: Set<String>
-    private var starredUIDs: Set<String>
-    private var laterUIDs: Set<String>
-    private var readUIDs: Set<String>
-    private var recapByDay: [String: String]
+    private let persistence: FeedPersistenceStore
+    private let retryQueue: AIRetryQueueStore
+    private var notifiedUIDs: Set<String> = []
+    private var pinnedUIDs: Set<String> = []
+    private var starredUIDs: Set<String> = []
+    private var laterUIDs: Set<String> = []
+    private var readUIDs: Set<String> = []
+    private var recapByDay: [String: String] = [:]
     private var hasLoadedSnapshot = false
     private var autoRefreshTask: Task<Void, Never>?
     private var manualRefreshPending = false
 
-    init() {
-        let defaults = UserDefaults.standard
-        notifiedUIDs = Set(defaults.array(forKey: notifiedUIDStoreKey) as? [String] ?? [])
-        pinnedUIDs = Set(defaults.array(forKey: pinnedStoreKey) as? [String] ?? [])
-        starredUIDs = Set(defaults.array(forKey: starredStoreKey) as? [String] ?? [])
-        laterUIDs = Set(defaults.array(forKey: laterStoreKey) as? [String] ?? [])
-        readUIDs = Set(defaults.array(forKey: readStoreKey) as? [String] ?? [])
-        recapByDay = Self.loadRecapCache(key: recapCacheStoreKey)
+    init(scope: String = "home", persistence: FeedPersistenceStore? = nil, retryQueue: AIRetryQueueStore = .shared) {
+        self.persistence = persistence ?? FeedPersistenceStore(scope: scope)
+        self.retryQueue = retryQueue
 
-        if let raw = defaults.string(forKey: filterStoreKey), let f = FeedFilterOption(rawValue: raw) {
-            filter = f
-        }
+        let state = self.persistence.loadState()
+        notifiedUIDs = state.notifiedUIDs
+        pinnedUIDs = state.pinnedUIDs
+        starredUIDs = state.starredUIDs
+        laterUIDs = state.laterUIDs
+        readUIDs = state.readUIDs
+        recapByDay = state.recapByDay
+        filter = state.filter
+        analysisByUID = state.analysisByUID
+        lastSuccessfulRefreshAt = state.lastSuccessAt
 
-        analysisByUID = Self.loadAnalysisCache(key: analysisCacheStoreKey)
-
-        let cachedItems = Self.loadCachedItems(key: latestItemsStoreKey)
+        let cachedItems = normalizedItems(from: state.latestItems)
         if !cachedItems.isEmpty {
             items = cachedItems
-            clusters = buildClusters(from: cachedItems)
+            clusters = TelegraphClusterer.buildClusters(from: cachedItems)
+            recomputeDisplayClusters()
             hasLoadedSnapshot = true
         }
-    }
 
-    var displayClusters: [TelegraphCluster] {
-        let filtered = clusters.filter { cluster in
-            let uid = cluster.primary.uid
-            switch filter {
-            case .all:
-                return true
-            case .starred:
-                return starredUIDs.contains(uid)
-            case .later:
-                return laterUIDs.contains(uid)
-            }
-        }
-
-        return filtered.sorted { lhs, rhs in
-            let lp = pinnedUIDs.contains(lhs.primary.uid)
-            let rp = pinnedUIDs.contains(rhs.primary.uid)
-            if lp != rp { return lp }
-
-            if lhs.primary.ctime != rhs.primary.ctime { return lhs.primary.ctime > rhs.primary.ctime }
-            return lhs.primary.uid > rhs.primary.uid
-        }
+        pendingAIJobs = retryQueue.pendingCount
     }
 
     var hasUnreadItems: Bool {
@@ -111,24 +86,47 @@ final class FeedViewModel: ObservableObject {
         do {
             let previousUIDs = Set(items.map(\.uid))
             let result = try await fetchTelegraphWithResilience(using: settings, trigger: trigger)
+            let fetchedItems = normalizedItems(from: result.items)
 
-            items = result.items
-            clusters = buildClusters(from: result.items)
+            // Avoid blanking the timeline when upstream returns an empty payload transiently.
+            if fetchedItems.isEmpty, !items.isEmpty {
+                sourceHealth = result.sources ?? []
+                let prefix: String
+                switch trigger {
+                case .manual:
+                    prefix = "手动刷新"
+                case .auto:
+                    prefix = "自动刷新"
+                case .startup:
+                    prefix = "启动刷新"
+                }
+                feedError = "\(prefix)返回空数据，已保留本地缓存内容。"
+                await preloadQuotes(for: Array(displayClusters.prefix(40)))
+                await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
+                return
+            }
+
+            items = fetchedItems
+            clusters = TelegraphClusterer.buildClusters(from: fetchedItems)
+            recomputeDisplayClusters()
             sourceHealth = result.sources ?? []
-            persistLatestItems(result.items)
+            persistLatestItems(fetchedItems)
             feedError = nil
+            lastSuccessfulRefreshAt = Date()
+            persistence.saveLastSuccess(lastSuccessfulRefreshAt)
 
             if hasLoadedSnapshot {
-                let newItems = result.items.filter { !previousUIDs.contains($0.uid) }
+                let newItems = fetchedItems.filter { !previousUIDs.contains($0.uid) }
                 await notifyKeywordMatchesIfNeeded(newItems: newItems, settings: settings)
             } else {
                 hasLoadedSnapshot = true
             }
 
             await preloadQuotes(for: Array(displayClusters.prefix(40)))
+            await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
         } catch {
-            // Keep previous content and fail silently for refresh UX.
-            feedError = nil
+            // Keep previous content while clearly surfacing network/service failures.
+            feedError = refreshErrorMessage(error, trigger: trigger)
         }
     }
 
@@ -136,11 +134,19 @@ final class FeedViewModel: ObservableObject {
         stopAutoRefresh()
 
         autoRefreshTask = Task {
+            await refresh(using: settings, trigger: .startup)
+            var nextTick = Date().timeIntervalSince1970 + max(1, settings.refreshInterval)
             while !Task.isCancelled {
+                let now = Date().timeIntervalSince1970
+                let wait = max(0.05, nextTick - now)
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                let started = Date().timeIntervalSince1970
                 await refresh(using: settings, trigger: .auto)
-                let interval = max(3, settings.refreshInterval)
-                let nanos = UInt64(interval * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanos)
+                await drainAIQueueIfPossible(using: settings, limit: 2)
+                let finished = Date().timeIntervalSince1970
+                let interval = max(1, settings.refreshInterval)
+                let nominalNext = started + interval
+                nextTick = max(nominalNext, finished + 0.15)
             }
         }
     }
@@ -155,7 +161,7 @@ final class FeedViewModel: ObservableObject {
 
         do {
             return try await APIClient.shared.fetchTelegraph(
-                baseURL: settings.serverBaseURL,
+                baseURL: settings.effectiveServerBaseURL,
                 limit: 120,
                 sources: selected
             )
@@ -169,7 +175,7 @@ final class FeedViewModel: ObservableObject {
 
             do {
                 return try await APIClient.shared.fetchTelegraph(
-                    baseURL: settings.serverBaseURL,
+                    baseURL: settings.effectiveServerBaseURL,
                     limit: 120,
                     sources: selected
                 )
@@ -179,7 +185,7 @@ final class FeedViewModel: ObservableObject {
                 if fallback != selected {
                     do {
                         let partial = try await APIClient.shared.fetchTelegraph(
-                            baseURL: settings.serverBaseURL,
+                            baseURL: settings.effectiveServerBaseURL,
                             limit: 120,
                             sources: fallback
                         )
@@ -230,13 +236,24 @@ final class FeedViewModel: ObservableObject {
         defer { analyzingUIDs.remove(item.uid) }
 
         do {
-            let analysis = try await APIClient.shared.analyze(baseURL: settings.serverBaseURL, item: item, ai: ai)
+            let analysis = try await APIClient.shared.analyze(baseURL: settings.effectiveServerBaseURL, item: item, ai: ai)
             analysisByUID[item.uid] = analysis
             persistAnalysisCache()
             aiError = nil
+            pendingAIJobs = retryQueue.pendingCount
         } catch {
-            aiError = error.localizedDescription
+            if settings.aiRetryQueueEnabled, shouldQueueForRetry(error) {
+                _ = retryQueue.enqueue(item)
+                pendingAIJobs = retryQueue.pendingCount
+                aiError = "AI 请求失败，已加入重试队列（待重试 \(pendingAIJobs) 条）"
+            } else {
+                aiError = error.localizedDescription
+            }
         }
+    }
+
+    func retryQueuedAnalyses(using settings: AppSettings) async {
+        await drainAIQueueIfPossible(using: settings, limit: 8, force: true)
     }
 
     func workflowState(for item: TelegraphItem) -> TelegraphWorkflowState {
@@ -250,22 +267,26 @@ final class FeedViewModel: ObservableObject {
 
     func setFilter(_ next: FeedFilterOption) {
         filter = next
-        UserDefaults.standard.set(next.rawValue, forKey: filterStoreKey)
+        recomputeDisplayClusters()
+        persistence.saveFilter(next)
     }
 
     func togglePinned(uid: String) {
         toggleSet(&pinnedUIDs, uid: uid)
-        persistSet(pinnedUIDs, key: pinnedStoreKey)
+        persistSet(pinnedUIDs, bucket: .pinned)
+        recomputeDisplayClusters()
     }
 
     func toggleStarred(uid: String) {
         toggleSet(&starredUIDs, uid: uid)
-        persistSet(starredUIDs, key: starredStoreKey)
+        persistSet(starredUIDs, bucket: .starred)
+        recomputeDisplayClusters()
     }
 
     func toggleReadLater(uid: String) {
         toggleSet(&laterUIDs, uid: uid)
-        persistSet(laterUIDs, key: laterStoreKey)
+        persistSet(laterUIDs, bucket: .later)
+        recomputeDisplayClusters()
     }
 
     func toggleRead(uid: String) {
@@ -274,13 +295,13 @@ final class FeedViewModel: ObservableObject {
         } else {
             readUIDs.insert(uid)
         }
-        persistSet(readUIDs, key: readStoreKey)
+        persistSet(readUIDs, bucket: .read)
         objectWillChange.send()
     }
 
     func markRead(uid: String) {
         if readUIDs.insert(uid).inserted {
-            persistSet(readUIDs, key: readStoreKey)
+            persistSet(readUIDs, bucket: .read)
             objectWillChange.send()
         }
     }
@@ -456,43 +477,19 @@ final class FeedViewModel: ObservableObject {
     }
 
     private func persistNotifiedUIDs() {
-        if notifiedUIDs.count > 1200 {
-            let kept = Array(notifiedUIDs.sorted().suffix(1200))
-            notifiedUIDs = Set(kept)
-        }
-        UserDefaults.standard.set(Array(notifiedUIDs), forKey: notifiedUIDStoreKey)
+        notifiedUIDs = persistence.saveUIDSet(notifiedUIDs, bucket: .notified, limit: 1200)
     }
 
     private func persistLatestItems(_ items: [TelegraphItem]) {
-        if let data = try? JSONEncoder().encode(Array(items.prefix(260))) {
-            UserDefaults.standard.set(data, forKey: latestItemsStoreKey)
-        }
+        persistence.saveLatestItems(items, limit: 260)
     }
 
     private func persistAnalysisCache() {
-        if analysisByUID.count > 1200 {
-            let keys = Array(analysisByUID.keys).sorted()
-            let overflow = analysisByUID.count - 1200
-            if overflow > 0 {
-                for key in keys.prefix(overflow) {
-                    analysisByUID.removeValue(forKey: key)
-                }
-            }
-        }
-        if let data = try? JSONEncoder().encode(analysisByUID) {
-            UserDefaults.standard.set(data, forKey: analysisCacheStoreKey)
-        }
+        analysisByUID = persistence.saveAnalysisMap(analysisByUID, limit: 1200)
     }
 
     private func persistRecapCache() {
-        var sorted = recapByDay.sorted { $0.key < $1.key }
-        if sorted.count > 30 {
-            sorted = Array(sorted.suffix(30))
-            recapByDay = Dictionary(uniqueKeysWithValues: sorted)
-        }
-        if let data = try? JSONEncoder().encode(recapByDay) {
-            UserDefaults.standard.set(data, forKey: recapCacheStoreKey)
-        }
+        recapByDay = persistence.saveRecapMap(recapByDay, keepDays: 30)
     }
 
     private func matchedKeywords(for item: TelegraphItem, keywords: [String]) -> [String] {
@@ -511,141 +508,6 @@ final class FeedViewModel: ObservableObject {
         return hits
     }
 
-    private func buildClusters(from items: [TelegraphItem]) -> [TelegraphCluster] {
-        if items.isEmpty { return [] }
-
-        var buckets: [[TelegraphItem]] = []
-        var bucketSignatures: [String] = []
-
-        for item in items {
-            let signature = clusterSignature(for: item)
-            var matchedIndex: Int?
-
-            for idx in buckets.indices {
-                guard let representative = buckets[idx].first else { continue }
-                if isSameEvent(item, representative, signature, bucketSignatures[idx]) {
-                    matchedIndex = idx
-                    break
-                }
-            }
-
-            if let idx = matchedIndex {
-                buckets[idx].append(item)
-            } else {
-                buckets.append([item])
-                bucketSignatures.append(signature)
-            }
-        }
-
-        let merged = buckets.map { group -> TelegraphCluster in
-            let sorted = group.sorted(by: itemPrioritySort)
-            let id = sorted.first?.uid ?? UUID().uuidString
-            return TelegraphCluster(id: id, items: sorted)
-        }
-
-        return merged.sorted {
-            let a = $0.primary
-            let b = $1.primary
-            if a.ctime != b.ctime { return a.ctime > b.ctime }
-            return a.uid > b.uid
-        }
-    }
-
-    private func itemPrioritySort(_ lhs: TelegraphItem, _ rhs: TelegraphItem) -> Bool {
-        let l = levelRank(lhs.level)
-        let r = levelRank(rhs.level)
-        if l != r { return l > r }
-        if lhs.ctime != rhs.ctime { return lhs.ctime > rhs.ctime }
-        return lhs.uid > rhs.uid
-    }
-
-    private func levelRank(_ level: String) -> Int {
-        switch level.uppercased() {
-        case "A":
-            return 3
-        case "B":
-            return 2
-        default:
-            return 1
-        }
-    }
-
-    private func clusterSignature(for item: TelegraphItem) -> String {
-        let h = comparableHeadline(for: item)
-        if h.count >= 10 {
-            return "h:\(String(h.prefix(72)))"
-        }
-
-        let x = normalizeForCluster(item.text)
-        if x.count >= 18 {
-            return "x:\(String(x.prefix(44)))"
-        }
-
-        return "u:\(item.uid)"
-    }
-
-    private func isSameEvent(_ lhs: TelegraphItem, _ rhs: TelegraphItem, _ lhsSignature: String, _ rhsSignature: String) -> Bool {
-        if lhs.ctime > 0, rhs.ctime > 0, abs(lhs.ctime - rhs.ctime) > 2 * 60 * 60 {
-            return false
-        }
-
-        if lhsSignature == rhsSignature, !lhsSignature.hasPrefix("u:") {
-            return true
-        }
-
-        let lh = comparableHeadline(for: lhs)
-        let rh = comparableHeadline(for: rhs)
-        if lh.count >= 10, rh.count >= 10, lh == rh {
-            return true
-        }
-
-        let lx = normalizeForCluster(lhs.text)
-        let rx = normalizeForCluster(rhs.text)
-        if lx.count >= 24, rx.count >= 24, String(lx.prefix(32)) == String(rx.prefix(32)) {
-            return true
-        }
-
-        if lh.count >= 12, rh.count >= 12 {
-            let lp = String(lh.prefix(22))
-            let rp = String(rh.prefix(22))
-            if lp.count >= 12, rp.count >= 12, (lp == rp || lh.hasPrefix(rp) || rh.hasPrefix(lp)) {
-                return true
-            }
-        }
-
-        if lh.count >= 12, rx.count >= 20, rx.hasPrefix(String(lh.prefix(20))) {
-            return true
-        }
-        if rh.count >= 12, lx.count >= 20, lx.hasPrefix(String(rh.prefix(20))) {
-            return true
-        }
-
-        return false
-    }
-
-    private func comparableHeadline(for item: TelegraphItem) -> String {
-        let t = normalizeForCluster(item.displayTitle)
-        if t.count >= 10 {
-            return t
-        }
-        let x = normalizeForCluster(item.text)
-        if x.count >= 24 {
-            return String(x.prefix(32))
-        }
-        return x
-    }
-
-    private func normalizeForCluster(_ text: String) -> String {
-        text
-            .lowercased()
-            .replacingOccurrences(of: "https?://\\S+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "^【[^】]{2,30}】", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "^(财联社|新浪财经|华尔街见闻|同花顺|东方财富)(\\d{1,2}月\\d{1,2}日)?电[，,:：\\s]*", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "^[\\p{Han}a-z0-9%]{0,16}电[，,:：\\s]*", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "[^\\p{Han}a-z0-9%]+", with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private func toggleSet(_ set: inout Set<String>, uid: String) {
         if set.contains(uid) {
             set.remove(uid)
@@ -654,24 +516,214 @@ final class FeedViewModel: ObservableObject {
         }
     }
 
-    private func persistSet(_ set: Set<String>, key: String) {
-        let clipped = Array(set.sorted().suffix(1800))
-        UserDefaults.standard.set(clipped, forKey: key)
+    private func persistSet(_ set: Set<String>, bucket: FeedUIDBucket) {
+        switch bucket {
+        case .pinned:
+            pinnedUIDs = persistence.saveUIDSet(set, bucket: .pinned)
+        case .starred:
+            starredUIDs = persistence.saveUIDSet(set, bucket: .starred)
+        case .later:
+            laterUIDs = persistence.saveUIDSet(set, bucket: .later)
+        case .read:
+            readUIDs = persistence.saveUIDSet(set, bucket: .read)
+        case .notified:
+            notifiedUIDs = persistence.saveUIDSet(set, bucket: .notified)
+        }
         objectWillChange.send()
     }
 
-    private static func loadAnalysisCache(key: String) -> [String: AIAnalysis] {
-        guard let raw = UserDefaults.standard.data(forKey: key) else { return [:] }
-        return (try? JSONDecoder().decode([String: AIAnalysis].self, from: raw)) ?? [:]
+    private func recomputeDisplayClusters() {
+        let prepared = clusters
+            .map(reorderedClusterByContent)
+            .filter(isRenderableCluster)
+
+        let filtered = prepared.filter { cluster in
+            let uid = cluster.primary.uid
+            switch filter {
+            case .all:
+                return true
+            case .starred:
+                return starredUIDs.contains(uid)
+            case .later:
+                return laterUIDs.contains(uid)
+            }
+        }
+
+        displayClusters = filtered.sorted { lhs, rhs in
+            let lp = pinnedUIDs.contains(lhs.primary.uid)
+            let rp = pinnedUIDs.contains(rhs.primary.uid)
+            if lp != rp { return lp }
+
+            if lhs.primary.ctime != rhs.primary.ctime { return lhs.primary.ctime > rhs.primary.ctime }
+            return lhs.primary.uid > rhs.primary.uid
+        }
     }
 
-    private static func loadRecapCache(key: String) -> [String: String] {
-        guard let raw = UserDefaults.standard.data(forKey: key) else { return [:] }
-        return (try? JSONDecoder().decode([String: String].self, from: raw)) ?? [:]
+    private func reorderedClusterByContent(_ cluster: TelegraphCluster) -> TelegraphCluster {
+        let sorted = cluster.items.sorted { lhs, rhs in
+            let lc = contentScore(lhs)
+            let rc = contentScore(rhs)
+            if lc != rc { return lc > rc }
+
+            let lt = lhs.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).count
+            let rt = rhs.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines).count
+            if lt != rt { return lt > rt }
+
+            if lhs.ctime != rhs.ctime { return lhs.ctime > rhs.ctime }
+            return lhs.uid > rhs.uid
+        }
+        let id = sorted.first?.uid ?? cluster.id
+        return TelegraphCluster(id: id, items: sorted)
     }
 
-    private static func loadCachedItems(key: String) -> [TelegraphItem] {
-        guard let raw = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([TelegraphItem].self, from: raw)) ?? []
+    private func isRenderableCluster(_ cluster: TelegraphCluster) -> Bool {
+        cluster.items.contains(where: isRenderableItem)
     }
+
+    private func isRenderableItem(_ item: TelegraphItem) -> Bool {
+        let title = canonicalReadableText(item.title)
+        let text = canonicalReadableText(item.text)
+        if title.count >= 2 { return true }
+        if text.count >= 8 { return true }
+        return false
+    }
+
+    private func contentScore(_ item: TelegraphItem) -> Int {
+        let title = canonicalReadableText(item.title)
+        let text = canonicalReadableText(item.text)
+        let titleScore = min(80, title.count * 2)
+        let textScore = min(220, text.count)
+        return titleScore + textScore
+    }
+
+    private func normalizedItems(from raw: [TelegraphItem]) -> [TelegraphItem] {
+        if raw.isEmpty { return [] }
+
+        var seenUID = Set<String>()
+        var seenFingerprint = Set<String>()
+        var out: [TelegraphItem] = []
+        out.reserveCapacity(raw.count)
+
+        for item in raw {
+            let title = canonicalReadableText(item.title)
+            let text = canonicalReadableText(item.text)
+
+            // Drop pseudo-empty records (only spaces/markup/noise).
+            guard !(title.isEmpty && text.isEmpty) else { continue }
+            guard hasMeaningfulCharacter(in: "\(title)\(text)") else { continue }
+            guard title.count >= 2 || text.count >= 8 || (text.count >= 4 && text.contains(where: \.isNumber)) else { continue }
+
+            guard seenUID.insert(item.uid).inserted else { continue }
+
+            // De-duplicate near-identical items with different uid from upstream retries.
+            let fp = "\(String(title.prefix(48)))|\(String(text.prefix(96)))|\(item.source)"
+            guard seenFingerprint.insert(fp).inserted else { continue }
+
+            out.append(item)
+        }
+
+        return out
+    }
+
+    private func canonicalReadableText(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "^【[^】]{2,30}】", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "^(财联社|新浪财经|华尔街见闻|同花顺|东方财富)(\\d{1,2}月\\d{1,2}日)?电[，,:：\\s]*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "[\\u200B\\u200C\\u200D\\u2060\\uFEFF]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func hasMeaningfulCharacter(in text: String) -> Bool {
+        text.range(of: "[\\p{Han}A-Za-z0-9]", options: .regularExpression) != nil
+    }
+
+    private func drainAIQueueIfPossible(using settings: AppSettings, limit: Int, force: Bool = false) async {
+        pendingAIJobs = retryQueue.pendingCount
+        guard pendingAIJobs > 0 else { return }
+        guard settings.aiRetryQueueEnabled else { return }
+
+        let ai = settings.aiSnapshot
+        guard !ai.apiKey.isEmpty, !ai.apiBase.isEmpty, !ai.model.isEmpty else { return }
+
+        let jobs = retryQueue.readyJobs(limit: limit, ignoreSchedule: force)
+        guard !jobs.isEmpty else { return }
+
+        var changedAnalysis = false
+        for job in jobs {
+            let uid = job.item.uid
+            if analyzingUIDs.contains(uid) {
+                continue
+            }
+
+            analyzingUIDs.insert(uid)
+            do {
+                let analysis = try await APIClient.shared.analyze(
+                    baseURL: settings.effectiveServerBaseURL,
+                    item: job.item,
+                    ai: ai
+                )
+                analysisByUID[uid] = analysis
+                retryQueue.markSucceeded(jobID: job.id)
+                changedAnalysis = true
+            } catch {
+                retryQueue.markFailed(jobID: job.id, error: error)
+            }
+            analyzingUIDs.remove(uid)
+        }
+
+        if changedAnalysis {
+            persistAnalysisCache()
+        }
+        pendingAIJobs = retryQueue.pendingCount
+    }
+
+    private func shouldQueueForRetry(_ error: Error) -> Bool {
+        if error is URLError {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        if message.contains("api key") || message.contains("401") || message.contains("403") {
+            return false
+        }
+
+        let retryHints = [
+            "timeout", "timed out", "network", "connection",
+            "not connected", "offline", "cannot find host",
+            "http 429", "http 500", "http 502", "http 503", "http 504"
+        ]
+        return retryHints.contains { message.contains($0) }
+    }
+
+    private func refreshErrorMessage(_ error: Error, trigger: RefreshTrigger) -> String {
+        let core = error.localizedDescription
+        let prefix: String
+        switch trigger {
+        case .manual:
+            prefix = "刷新失败"
+        case .auto:
+            prefix = "自动刷新失败"
+        case .startup:
+            prefix = "初始化加载失败"
+        }
+
+        if let lastSuccessfulRefreshAt {
+            return "\(prefix)：\(core)。已保留旧数据（上次成功 \(refreshTimeText(lastSuccessfulRefreshAt))）。"
+        }
+        return "\(prefix)：\(core)"
+    }
+
+    private func refreshTimeText(_ date: Date) -> String {
+        Self.refreshTimeFormatter.string(from: date)
+    }
+
+    private static let refreshTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
