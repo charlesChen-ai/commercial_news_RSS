@@ -1,5 +1,11 @@
 import Foundation
 
+enum RefreshTrigger {
+    case manual
+    case auto
+    case startup
+}
+
 @MainActor
 final class FeedViewModel: ObservableObject {
     @Published var items: [TelegraphItem] = []
@@ -31,6 +37,7 @@ final class FeedViewModel: ObservableObject {
     private var recapByDay: [String: String]
     private var hasLoadedSnapshot = false
     private var autoRefreshTask: Task<Void, Never>?
+    private var manualRefreshPending = false
 
     init() {
         let defaults = UserDefaults.standard
@@ -90,17 +97,27 @@ final class FeedViewModel: ObservableObject {
         displayClusters.contains { !readUIDs.contains($0.primary.uid) }
     }
 
-    func refresh(using settings: AppSettings) async {
+    func refresh(using settings: AppSettings, trigger: RefreshTrigger = .manual) async {
+        if isLoading {
+            if trigger == .manual, !manualRefreshPending {
+                manualRefreshPending = true
+                // Wait for in-flight refresh to finish, then run one manual refresh.
+                for _ in 0..<24 where isLoading {
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                }
+                manualRefreshPending = false
+                if isLoading { return }
+            } else {
+                return
+            }
+        }
+
         isLoading = true
         defer { isLoading = false }
 
         do {
             let previousUIDs = Set(items.map(\.uid))
-            let result = try await APIClient.shared.fetchTelegraph(
-                baseURL: settings.serverBaseURL,
-                limit: 120,
-                sources: settings.selectedSources
-            )
+            let result = try await fetchTelegraphWithResilience(using: settings, trigger: trigger)
 
             items = result.items
             clusters = buildClusters(from: result.items)
@@ -117,7 +134,11 @@ final class FeedViewModel: ObservableObject {
 
             await preloadQuotes(for: Array(displayClusters.prefix(40)))
         } catch {
-            lastError = error.localizedDescription
+            if !items.isEmpty {
+                lastError = "刷新失败，已保留上次内容：\(error.localizedDescription)"
+            } else {
+                lastError = error.localizedDescription
+            }
         }
     }
 
@@ -126,7 +147,7 @@ final class FeedViewModel: ObservableObject {
 
         autoRefreshTask = Task {
             while !Task.isCancelled {
-                await refresh(using: settings)
+                await refresh(using: settings, trigger: .auto)
                 let interval = max(3, settings.refreshInterval)
                 let nanos = UInt64(interval * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: nanos)
@@ -137,6 +158,64 @@ final class FeedViewModel: ObservableObject {
     func stopAutoRefresh() {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
+    }
+
+    private func fetchTelegraphWithResilience(using settings: AppSettings, trigger: RefreshTrigger) async throws -> TelegraphResponse {
+        let selected = settings.selectedSources
+
+        do {
+            return try await APIClient.shared.fetchTelegraph(
+                baseURL: settings.serverBaseURL,
+                limit: 120,
+                sources: selected
+            )
+        } catch {
+            let primaryError = error
+            guard trigger == .manual else {
+                throw primaryError
+            }
+
+            try? await Task.sleep(nanoseconds: 650_000_000)
+
+            do {
+                return try await APIClient.shared.fetchTelegraph(
+                    baseURL: settings.serverBaseURL,
+                    limit: 120,
+                    sources: selected
+                )
+            } catch {
+                let secondError = error
+                let fallback = fallbackSources(for: selected)
+                if fallback != selected {
+                    do {
+                        let partial = try await APIClient.shared.fetchTelegraph(
+                            baseURL: settings.serverBaseURL,
+                            limit: 120,
+                            sources: fallback
+                        )
+                        lastError = "部分信息源响应超时，已返回可用源数据。"
+                        return partial
+                    } catch {
+                        throw secondError
+                    }
+                }
+                throw secondError
+            }
+        }
+    }
+
+    private func fallbackSources(for selected: [NewsSource]) -> [NewsSource] {
+        let removeTHS = selected.filter { $0 != .ths }
+        if removeTHS.count >= 1, removeTHS.count < selected.count {
+            return removeTHS
+        }
+
+        let removeUnstable = selected.filter { $0 != .ths && $0 != .wscn }
+        if removeUnstable.count >= 1, removeUnstable.count < selected.count {
+            return removeUnstable
+        }
+
+        return selected
     }
 
     func analyze(item: TelegraphItem, settings: AppSettings) async {
