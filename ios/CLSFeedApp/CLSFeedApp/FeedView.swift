@@ -46,12 +46,12 @@ struct FeedView: View {
                                 if topSection == .headline {
                                     sectionCard(
                                         title: "头条",
-                                        subtitle: "A/B级高优先快讯",
+                                        subtitle: "A/B级多源聚合事件",
                                         icon: "flame.fill",
                                         tint: .red
                                     ) {
                                         if headlineClusters.isEmpty {
-                                            Text("当前暂无头条")
+                                            Text("当前暂无可聚合的头条事件")
                                                 .font(.footnote)
                                                 .foregroundStyle(.secondary)
                                                 .padding(.vertical, 4)
@@ -238,9 +238,17 @@ struct FeedView: View {
 
     private var headlineClusters: [TelegraphCluster] {
         Array(
+            headlineBaseClusters
+                .filter(\.isMerged)
+                .prefix(12)
+        )
+    }
+
+    private var headlineBaseClusters: [TelegraphCluster] {
+        Array(
             viewModel.displayClusters
                 .filter { ["A", "B"].contains($0.primary.level.uppercased()) }
-                .prefix(12)
+                .prefix(20)
         )
     }
 
