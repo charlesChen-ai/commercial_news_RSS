@@ -126,9 +126,6 @@ struct TelegraphCardView: View {
                 withAnimation(.easeInOut(duration: 0.22)) {
                     expandText.toggle()
                 }
-                if !workflow.isRead {
-                    onToggleRead()
-                }
             } label: {
                 Label(expandText ? "收起全文" : "展开全文", systemImage: expandText ? "chevron.up" : "chevron.down")
                     .font(.caption.weight(.semibold))
