@@ -368,18 +368,29 @@ struct FeedView: View {
 
                 Spacer()
 
-                Button {
-                    viewModel.markRead(uid: cluster.primary.uid)
-                    selectedCluster = cluster
-                } label: {
-                    Label("事件详情", systemImage: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.06), in: Capsule())
+                if cluster.isMerged {
+                    Button {
+                        viewModel.markRead(uid: cluster.primary.uid)
+                        selectedCluster = cluster
+                    } label: {
+                        Label("事件详情", systemImage: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                } else if let url = URL(string: cluster.primary.url), !cluster.primary.url.isEmpty {
+                    Link(destination: url) {
+                        Label("原文", systemImage: "arrow.up.right")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.06), in: Capsule())
+                    }
+                    .foregroundStyle(.primary)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
             }
             .padding(.horizontal, 4)
 
