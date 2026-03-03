@@ -81,10 +81,6 @@ final class FeedViewModel: ObservableObject {
             let rp = pinnedUIDs.contains(rhs.primary.uid)
             if lp != rp { return lp }
 
-            let lu = !readUIDs.contains(lhs.primary.uid)
-            let ru = !readUIDs.contains(rhs.primary.uid)
-            if lu != ru { return lu }
-
             if lhs.primary.ctime != rhs.primary.ctime { return lhs.primary.ctime > rhs.primary.ctime }
             return lhs.primary.uid > rhs.primary.uid
         }
@@ -215,8 +211,6 @@ final class FeedViewModel: ObservableObject {
         if analyzingUIDs.contains(item.uid) {
             return
         }
-
-        markRead(uid: item.uid)
 
         let ai = settings.aiSnapshot
         if ai.apiKey.isEmpty {
