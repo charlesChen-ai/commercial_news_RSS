@@ -19,8 +19,7 @@ struct ConsoleView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         serviceCard
-                        sourceHealthCard
-                        sourceCard
+                        sourcePanelCard
                         alertCard
                         aiCard
                     }
@@ -81,16 +80,8 @@ struct ConsoleView: View {
         }
     }
 
-    private var sourceCard: some View {
-        settingsCard(title: "信息流接入") {
-            ForEach(NewsSource.allCases) { source in
-                Toggle(source.displayName, isOn: sourceBinding(source))
-            }
-        }
-    }
-
-    private var sourceHealthCard: some View {
-        settingsCard(title: "源状态") {
+    private var sourcePanelCard: some View {
+        settingsCard(title: "信息源接入与状态") {
             HStack {
                 if let sourceCheckedAt {
                     Text("最近检查：\(timeText(sourceCheckedAt))")
@@ -115,7 +106,7 @@ struct ConsoleView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(checkingSourceHealth)
+                    .disabled(checkingSourceHealth)
             }
 
             if let sourceHealthError, !sourceHealthError.isEmpty {
@@ -124,26 +115,20 @@ struct ConsoleView: View {
                     .foregroundStyle(.red)
             }
 
-            if sourceHealth.isEmpty {
-                Text("暂无状态数据")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(sourceHealth, id: \.source) { status in
-                    HStack(spacing: 10) {
-                        Text(status.sourceName)
-                            .font(.subheadline)
-                        Spacer(minLength: 8)
-                        Text(status.ok ? "OK" : "失败")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(status.ok ? .green : .red)
-                        Text("\(status.count)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    if status.source != sourceHealth.last?.source {
-                        Divider()
-                    }
+            ForEach(NewsSource.allCases) { source in
+                HStack(spacing: 10) {
+                    Text(source.displayName)
+                        .font(.subheadline)
+
+                    Spacer(minLength: 8)
+
+                    sourceStatusBadge(source)
+
+                    Toggle("", isOn: sourceBinding(source))
+                        .labelsHidden()
+                }
+                if source != NewsSource.allCases.last {
+                    Divider()
                 }
             }
         }
@@ -287,6 +272,25 @@ struct ConsoleView: View {
             get: { settings.isSourceEnabled(source) },
             set: { settings.setSource(source, enabled: $0) }
         )
+    }
+
+    @ViewBuilder
+    private func sourceStatusBadge(_ source: NewsSource) -> some View {
+        let status = sourceHealth.first { $0.source == source.rawValue }
+        if let status {
+            HStack(spacing: 6) {
+                Text(status.ok ? "OK" : "失败")
+                    .foregroundStyle(status.ok ? .green : .red)
+                Text("\(status.count)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption.weight(.semibold))
+        } else {
+            Text("--")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 
     @MainActor

@@ -362,7 +362,19 @@ final class LocalTelegraphAggregator {
 
     private func fetchTHS(limit: Int) async throws -> [TelegraphItem] {
         let html = try await fetchText(url: "https://www.10jqka.com.cn/", headers: ["Referer": "https://www.10jqka.com.cn/"])
-        let rows = extractTHSRows(from: html)
+        var rows: [[String: Any]] = []
+
+        // Keep THS logic aligned with the web proxy: prefer escaped initialNewsList first.
+        if let escaped = extractEscapedJSONArrayByKey(html: html, escapedKey: "initialNewsList"),
+           let parsed = parseJSONArrayText(escaped, escaped: true),
+           !parsed.isEmpty {
+            rows = parsed
+        }
+
+        if rows.isEmpty {
+            rows = extractTHSRows(from: html)
+        }
+
         if rows.isEmpty {
             throw LocalAggregatorError.sourceFailed("ths_rows_not_found")
         }
@@ -732,7 +744,7 @@ private func extractEscapedJSONArrayByKey(html: String, escapedKey: String) -> S
     let marker = "\\\"\(escapedKey)\\\":["
     guard let start = html.range(of: marker)?.lowerBound else { return nil }
     let arrayStart = html.index(start, offsetBy: marker.count - 1)
-    return extractBalancedArray(String(html[arrayStart...]))
+    return extractBalancedEscapedArray(String(html[arrayStart...]))
 }
 
 private func extractAssignedJSONArray(html: String, varName: String) -> String? {
@@ -777,6 +789,30 @@ private func extractBalancedArray(_ text: String) -> String? {
             inString = true
             continue
         }
+
+        if ch == "[" {
+            if start == nil { start = idx }
+            depth += 1
+            continue
+        }
+
+        if ch == "]" {
+            depth -= 1
+            if depth == 0, let s = start {
+                return String(text[s...idx])
+            }
+        }
+    }
+
+    return nil
+}
+
+private func extractBalancedEscapedArray(_ text: String) -> String? {
+    var depth = 0
+    var start: String.Index?
+
+    for idx in text.indices {
+        let ch = text[idx]
 
         if ch == "[" {
             if start == nil { start = idx }
