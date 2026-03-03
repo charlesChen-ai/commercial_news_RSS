@@ -94,7 +94,6 @@ struct TelegraphItem: Codable, Identifiable, Hashable {
 
 enum FeedFilterOption: String, CaseIterable, Identifiable, Codable {
     case all
-    case unread
     case starred
     case later
 
@@ -104,8 +103,6 @@ enum FeedFilterOption: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .all:
             return "全部"
-        case .unread:
-            return "未读"
         case .starred:
             return "收藏"
         case .later:

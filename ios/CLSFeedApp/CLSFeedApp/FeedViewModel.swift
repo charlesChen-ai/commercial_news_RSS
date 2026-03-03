@@ -68,8 +68,6 @@ final class FeedViewModel: ObservableObject {
             switch filter {
             case .all:
                 return true
-            case .unread:
-                return !readUIDs.contains(uid)
             case .starred:
                 return starredUIDs.contains(uid)
             case .later:
