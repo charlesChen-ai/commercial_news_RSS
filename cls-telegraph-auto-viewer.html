@@ -6,21 +6,19 @@
   <title>多源财经快讯自动盯盘台</title>
   <style>
     :root {
-      --bg: radial-gradient(1200px 700px at 0% -20%, #d9f3ff 0%, transparent 52%),
-            radial-gradient(1000px 620px at 100% 0%, #fdecc8 0%, transparent 55%),
-            linear-gradient(160deg, #f8fafc 0%, #eef2ff 50%, #f5f7fb 100%);
-      --panel: rgba(255, 255, 255, 0.84);
-      --panel-strong: rgba(255, 255, 255, 0.96);
-      --text: #0f172a;
-      --muted: #64748b;
-      --line: rgba(15, 23, 42, 0.12);
-      --brand: #0c4a6e;
-      --brand-soft: rgba(12, 74, 110, 0.1);
-      --green: #0f766e;
-      --red: #b91c1c;
-      --amber: #b45309;
-      --shadow: 0 14px 36px rgba(15, 23, 42, 0.1);
-      --radius: 16px;
+      --bg: #f2f2f7;
+      --panel: #f7f7fb;
+      --panel-strong: #ffffff;
+      --text: #1c1c1e;
+      --muted: #6e6e73;
+      --line: rgba(17, 17, 17, 0.1);
+      --brand: #0a84ff;
+      --brand-soft: rgba(10, 132, 255, 0.12);
+      --green: #34c759;
+      --red: #b45309;
+      --amber: #ff9500;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.07), 0 8px 20px rgba(0, 0, 0, 0.04);
+      --radius: 14px;
     }
 
     * { box-sizing: border-box; }
@@ -30,16 +28,16 @@
       min-height: 100vh;
       color: var(--text);
       background: var(--bg);
-      font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      padding: 12px;
     }
 
     .app {
-      max-width: 1360px;
+      max-width: 1320px;
       margin: 0 auto;
       display: grid;
       grid-template-columns: minmax(320px, 420px) minmax(560px, 1fr);
-      gap: 14px;
+      gap: 12px;
       transition: grid-template-columns .22s ease;
     }
 
@@ -53,15 +51,13 @@
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
     }
 
     .left {
       padding: 14px;
       position: sticky;
-      top: 16px;
-      height: calc(100vh - 32px);
+      top: 12px;
+      height: calc(100vh - 24px);
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -98,15 +94,14 @@
       padding: 6px 10px;
       font-size: 12px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.9);
-      border: 1px solid rgba(12, 74, 110, 0.2);
+      background: var(--panel-strong);
+      border: 1px solid rgba(17, 17, 17, 0.12);
       color: var(--brand);
       white-space: nowrap;
     }
 
     .btn-ghost:hover {
-      border-color: rgba(12, 74, 110, 0.42);
-      transform: translateY(-1px);
+      border-color: rgba(10, 132, 255, 0.4);
     }
 
     .desc {
@@ -133,7 +128,7 @@
     .stat b {
       display: block;
       color: var(--brand);
-      font-size: 16px;
+      font-size: 17px;
       margin-top: 2px;
       line-height: 1;
     }
@@ -159,7 +154,7 @@
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #fff;
+      background: var(--panel-strong);
       color: var(--text);
       padding: 9px 10px;
       font-size: 13px;
@@ -171,14 +166,13 @@
     }
 
     button:hover {
-      transform: translateY(-1px);
-      border-color: #7dd3fc;
+      border-color: rgba(10, 132, 255, 0.4);
     }
 
     button.active {
       background: var(--brand-soft);
       color: var(--brand);
-      border-color: #7dd3fc;
+      border-color: rgba(10, 132, 255, 0.38);
     }
 
     button.warn {
@@ -187,9 +181,9 @@
     }
 
     .status {
-      border: 1px dashed var(--line);
+      border: 1px solid var(--line);
       border-radius: 12px;
-      background: rgba(248, 250, 252, 0.85);
+      background: var(--panel-strong);
       padding: 9px 10px;
       font-size: 12px;
       line-height: 1.55;
@@ -212,8 +206,8 @@
     .tips {
       margin-top: auto;
       border-radius: 12px;
-      border: 1px dashed rgba(15, 23, 42, 0.2);
-      background: rgba(248, 250, 252, 0.9);
+      border: 1px solid rgba(17, 17, 17, 0.08);
+      background: var(--panel-strong);
       padding: 10px;
       font-size: 12px;
       color: var(--muted);
@@ -221,7 +215,7 @@
     }
 
     .right {
-      min-height: calc(100vh - 32px);
+      min-height: calc(100vh - 24px);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -234,7 +228,7 @@
       gap: 8px;
       border-bottom: 1px solid var(--line);
       padding: 12px 14px;
-      background: var(--panel-strong);
+      background: rgba(255, 255, 255, 0.82);
       border-radius: var(--radius) var(--radius) 0 0;
     }
 
@@ -245,69 +239,104 @@
 
     .badge {
       font-size: 12px;
-      color: var(--green);
-      background: rgba(15, 118, 110, 0.1);
-      border: 1px solid rgba(15, 118, 110, 0.25);
+      color: var(--brand);
+      background: rgba(10, 132, 255, 0.12);
+      border: 1px solid rgba(10, 132, 255, 0.24);
       border-radius: 999px;
       padding: 2px 9px;
       white-space: nowrap;
     }
 
+    .feed-section-switch {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.76);
+    }
+
+    .section-pill {
+      width: auto;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid rgba(17, 17, 17, 0.12);
+      background: var(--panel-strong);
+      color: #3f3f46;
+    }
+
+    .section-pill.active {
+      background: rgba(10, 132, 255, 0.14);
+      border-color: rgba(10, 132, 255, 0.34);
+      color: var(--brand);
+    }
+
     .feed {
       flex: 1;
       overflow: auto;
-      padding: 10px;
+      padding: 12px;
       scroll-behavior: smooth;
+      contain: paint;
+      transform: translateZ(0);
     }
 
     .item {
-      border: 1px solid var(--line);
-      border-left: 4px solid #7dd3fc;
+      position: relative;
+      border: 1.2px solid rgba(17, 17, 17, 0.12);
       background: var(--panel-strong);
-      border-radius: 12px;
-      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+      border-radius: 14px;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06);
       padding: 10px 12px;
-      margin-bottom: 9px;
+      margin-bottom: 14px;
+      backface-visibility: hidden;
+      transform: translateZ(0);
+    }
+
+    .item::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      bottom: 9px;
+      width: 3.5px;
+      border-radius: 2px;
+      display: none;
     }
 
     .item.item-enter {
-      animation: item-insert .78s cubic-bezier(.16, .84, .26, 1) both;
-      will-change: transform, opacity, box-shadow;
+      animation: item-insert .28s ease-out both;
+      will-change: transform, opacity;
     }
 
     @keyframes item-insert {
       0% {
         opacity: 0;
-        transform: translateX(-28px);
-        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
-      }
-      72% {
-        opacity: 1;
-        transform: translateX(2px);
+        transform: translateY(8px);
       }
       100% {
         opacity: 1;
-        transform: translateX(0);
+        transform: translateY(0);
       }
     }
 
     .item.level-a {
-      border-left-color: #dc2626;
-      background: linear-gradient(90deg, rgba(220, 38, 38, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+      border-color: rgba(13, 148, 136, 0.28);
     }
 
     .item.level-b {
-      border-left-color: #ea580c;
-      background: linear-gradient(90deg, rgba(234, 88, 12, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+      border-color: rgba(255, 149, 0, 0.24);
     }
 
-    .item.level-c {
-      border-left-color: #0284c7;
-      background: linear-gradient(90deg, rgba(2, 132, 199, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
+    .item.level-a::before {
+      display: block;
+      background: rgba(13, 148, 136, 0.86);
     }
 
-    .item.level-n {
-      border-left-color: #64748b;
+    .item.level-b::before {
+      display: block;
+      background: rgba(255, 149, 0, 0.82);
     }
 
     .item:last-child { margin-bottom: 0; }
@@ -323,11 +352,11 @@
     }
 
     .item-time {
-      font-family: "DIN Alternate", "Roboto Mono", "SFMono-Regular", "Consolas", monospace;
-      font-weight: 800;
-      font-size: 14px;
-      letter-spacing: 0.2px;
-      color: #b45309;
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.1px;
+      color: var(--text);
       white-space: nowrap;
       line-height: 1;
     }
@@ -344,6 +373,7 @@
       border-radius: 999px;
       border: 1px solid transparent;
       padding: 1px 8px;
+      font-size: 12px;
       font-weight: 600;
       white-space: nowrap;
     }
@@ -351,37 +381,37 @@
     .source-cls {
       color: #0f766e;
       background: rgba(15, 118, 110, 0.12);
-      border-color: rgba(15, 118, 110, 0.22);
+      border-color: rgba(15, 118, 110, 0.24);
     }
 
     .source-eastmoney {
-      color: #92400e;
-      background: rgba(245, 158, 11, 0.12);
-      border-color: rgba(245, 158, 11, 0.24);
+      color: #a16207;
+      background: rgba(202, 138, 4, 0.12);
+      border-color: rgba(202, 138, 4, 0.24);
     }
 
     .source-sina {
-      color: #9f1239;
-      background: rgba(244, 63, 94, 0.12);
-      border-color: rgba(244, 63, 94, 0.24);
+      color: #7e22ce;
+      background: rgba(126, 34, 206, 0.11);
+      border-color: rgba(126, 34, 206, 0.24);
     }
 
     .source-wscn {
-      color: #1d4ed8;
-      background: rgba(59, 130, 246, 0.12);
-      border-color: rgba(59, 130, 246, 0.24);
+      color: #475569;
+      background: rgba(71, 85, 105, 0.11);
+      border-color: rgba(71, 85, 105, 0.22);
     }
 
     .source-ths {
-      color: #6d28d9;
-      background: rgba(139, 92, 246, 0.12);
-      border-color: rgba(139, 92, 246, 0.24);
+      color: #7e22ce;
+      background: rgba(126, 34, 206, 0.11);
+      border-color: rgba(126, 34, 206, 0.24);
     }
 
     .source-other {
-      color: #334155;
-      background: rgba(100, 116, 139, 0.12);
-      border-color: rgba(100, 116, 139, 0.24);
+      color: #475569;
+      background: rgba(71, 85, 105, 0.11);
+      border-color: rgba(71, 85, 105, 0.22);
     }
 
     .lv {
@@ -392,21 +422,21 @@
     }
 
     .lv.lv-a {
-      color: #991b1b;
-      background: rgba(220, 38, 38, 0.12);
-      border-color: rgba(220, 38, 38, 0.22);
+      color: #0f766e;
+      background: rgba(13, 148, 136, 0.12);
+      border-color: rgba(13, 148, 136, 0.24);
     }
 
     .lv.lv-b {
-      color: #9a3412;
-      background: rgba(234, 88, 12, 0.12);
-      border-color: rgba(234, 88, 12, 0.22);
+      color: #b16800;
+      background: rgba(255, 149, 0, 0.12);
+      border-color: rgba(255, 149, 0, 0.24);
     }
 
     .lv.lv-c {
-      color: #0c4a6e;
-      background: rgba(2, 132, 199, 0.12);
-      border-color: rgba(2, 132, 199, 0.22);
+      color: #3666d6;
+      background: rgba(54, 102, 214, 0.1);
+      border-color: rgba(54, 102, 214, 0.2);
     }
 
     .lv.lv-n {
@@ -416,7 +446,7 @@
     }
 
     .title-row {
-      font-size: 14px;
+      font-size: 16px;
       font-weight: 700;
       line-height: 1.4;
       margin-bottom: 5px;
@@ -424,10 +454,10 @@
 
     .text {
       font-size: 14px;
-      line-height: 1.68;
+      line-height: 1.62;
       white-space: pre-wrap;
       word-break: break-word;
-      color: #1f2937;
+      color: #4a4a50;
     }
 
     .expand-wrap {
@@ -442,9 +472,9 @@
       align-items: center;
       gap: 6px;
       font-size: 12px;
-      color: var(--brand);
-      background: rgba(12, 74, 110, 0.08);
-      border: 1px solid rgba(12, 74, 110, 0.18);
+      color: #475569;
+      background: rgba(71, 85, 105, 0.08);
+      border: 1px solid rgba(71, 85, 105, 0.2);
       border-radius: 999px;
       padding: 2px 9px;
       margin-bottom: 8px;
@@ -467,8 +497,8 @@
 
     .expand-wrap[open] summary {
       margin-bottom: 6px;
-      background: rgba(12, 74, 110, 0.14);
-      border-color: rgba(12, 74, 110, 0.24);
+      background: rgba(71, 85, 105, 0.12);
+      border-color: rgba(71, 85, 105, 0.26);
     }
 
     .meta {
@@ -494,40 +524,137 @@
       min-width: 0;
     }
 
+    .cluster-meta {
+      margin-top: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #4b5563;
+      background: rgba(17, 17, 17, 0.05);
+      border: 1px solid rgba(17, 17, 17, 0.1);
+      border-radius: 999px;
+      padding: 2px 9px;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .cluster-wrap {
+      margin-top: 7px;
+    }
+
+    .cluster-wrap summary {
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #6d28d9;
+      background: rgba(109, 40, 217, 0.08);
+      border: 1px solid rgba(109, 40, 217, 0.22);
+      border-radius: 999px;
+      padding: 2px 9px;
+    }
+
+    .cluster-wrap summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .cluster-wrap summary::before {
+      content: '▸';
+      font-size: 12px;
+      line-height: 1;
+      transition: transform .16s ease;
+    }
+
+    .cluster-wrap[open] summary::before {
+      transform: rotate(90deg);
+    }
+
+    .cluster-list {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .cluster-row {
+      border-radius: 10px;
+      border: 1px solid rgba(17, 17, 17, 0.08);
+      background: rgba(17, 17, 17, 0.03);
+      padding: 6px 8px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+
+    .cluster-row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+      color: #6b7280;
+      font-size: 11px;
+    }
+
+    .cluster-row-time {
+      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #4b5563;
+      white-space: nowrap;
+    }
+
+    .cluster-row-source {
+      border-radius: 999px;
+      padding: 1px 7px;
+      border: 1px solid rgba(109, 40, 217, 0.22);
+      background: rgba(109, 40, 217, 0.08);
+      color: #6d28d9;
+      white-space: nowrap;
+    }
+
+    .cluster-row-text {
+      color: #4b5563;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
     .ai-btn {
       width: auto;
       border-radius: 999px;
-      padding: 4px 10px;
+      padding: 5px 11px;
       font-size: 12px;
       line-height: 1;
-      color: #075985;
-      background: rgba(14, 165, 233, 0.1);
-      border: 1px solid rgba(14, 165, 233, 0.28);
+      color: var(--brand);
+      background: rgba(10, 132, 255, 0.14);
+      border: 1px solid rgba(10, 132, 255, 0.26);
       white-space: nowrap;
     }
 
     .ai-btn:hover {
-      border-color: rgba(14, 165, 233, 0.45);
+      border-color: rgba(10, 132, 255, 0.42);
     }
 
     .ai-btn.loading {
-      color: #92400e;
-      border-color: rgba(245, 158, 11, 0.3);
-      background: rgba(245, 158, 11, 0.12);
+      color: #b16800;
+      border-color: rgba(255, 149, 0, 0.32);
+      background: rgba(255, 149, 0, 0.14);
       cursor: wait;
     }
 
     .ai-btn.done {
-      color: #0f766e;
-      border-color: rgba(15, 118, 110, 0.3);
-      background: rgba(15, 118, 110, 0.1);
+      color: var(--brand);
+      border-color: rgba(10, 132, 255, 0.32);
+      background: rgba(10, 132, 255, 0.18);
     }
 
     .ai-panel {
       margin-top: 7px;
       border-radius: 10px;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      background: rgba(248, 250, 252, 0.92);
+      border: 1px solid rgba(17, 17, 17, 0.08);
+      background: #ffffff;
       padding: 8px 10px;
       font-size: 12px;
       line-height: 1.55;
@@ -551,21 +678,21 @@
     }
 
     .ai-chip.bullish {
-      color: #14532d;
-      background: rgba(34, 197, 94, 0.12);
-      border-color: rgba(34, 197, 94, 0.28);
+      color: #1a8f45;
+      background: rgba(52, 199, 89, 0.14);
+      border-color: rgba(52, 199, 89, 0.28);
     }
 
     .ai-chip.bearish {
-      color: #7f1d1d;
-      background: rgba(239, 68, 68, 0.12);
-      border-color: rgba(239, 68, 68, 0.28);
+      color: #475569;
+      background: rgba(71, 85, 105, 0.14);
+      border-color: rgba(71, 85, 105, 0.28);
     }
 
     .ai-chip.neutral {
-      color: #334155;
-      background: rgba(100, 116, 139, 0.12);
-      border-color: rgba(100, 116, 139, 0.24);
+      color: #b16800;
+      background: rgba(255, 149, 0, 0.14);
+      border-color: rgba(255, 149, 0, 0.28);
     }
 
     .ai-score {
@@ -575,7 +702,7 @@
     }
 
     .ai-summary {
-      color: #334155;
+      color: #2f2f33;
       margin: 4px 0 0;
       white-space: pre-wrap;
       word-break: break-word;
@@ -584,7 +711,7 @@
     .ai-bullets {
       margin: 5px 0 0;
       padding-left: 16px;
-      color: #475569;
+      color: #5f5f65;
     }
 
     .ai-targets {
@@ -597,7 +724,7 @@
 
     .ai-target-title {
       font-size: 11px;
-      color: #64748b;
+      color: var(--muted);
       margin-right: 2px;
     }
 
@@ -608,26 +735,26 @@
       font-size: 11px;
       line-height: 1.3;
       white-space: nowrap;
-      color: #334155;
-      border-color: rgba(100, 116, 139, 0.24);
-      background: rgba(100, 116, 139, 0.12);
+      color: #3e3e44;
+      border-color: rgba(17, 17, 17, 0.14);
+      background: rgba(17, 17, 17, 0.06);
     }
 
     .ai-target.bullish {
-      color: #14532d;
-      border-color: rgba(34, 197, 94, 0.28);
-      background: rgba(34, 197, 94, 0.12);
+      color: #1a8f45;
+      border-color: rgba(52, 199, 89, 0.3);
+      background: rgba(52, 199, 89, 0.14);
     }
 
     .ai-target.bearish {
-      color: #7f1d1d;
-      border-color: rgba(239, 68, 68, 0.28);
-      background: rgba(239, 68, 68, 0.12);
+      color: #475569;
+      border-color: rgba(71, 85, 105, 0.3);
+      background: rgba(71, 85, 105, 0.14);
     }
 
     mark {
-      background: #fde68a;
-      color: #111827;
+      background: rgba(255, 214, 10, 0.45);
+      color: #1c1c1e;
       border-radius: 4px;
       padding: 0 2px;
     }
@@ -660,11 +787,11 @@
       right: 20px;
       bottom: 20px;
       z-index: 999;
-      background: #111827;
+      background: rgba(20, 20, 20, 0.88);
       color: #fff;
       padding: 9px 12px;
-      border-radius: 10px;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
       opacity: 0;
       transform: translateY(8px);
       transition: all .22s ease;
@@ -686,12 +813,10 @@
       width: auto;
       padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.96);
-      border: 1px solid rgba(12, 74, 110, 0.22);
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(17, 17, 17, 0.12);
       color: var(--brand);
-      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
       display: none;
       font-size: 12px;
       opacity: 0.62;
@@ -701,7 +826,7 @@
     .sidebar-float:hover {
       opacity: 0.95;
       transform: translateY(-1px);
-      border-color: rgba(12, 74, 110, 0.38);
+      border-color: rgba(10, 132, 255, 0.38);
     }
 
     .sidebar-float.show {
@@ -710,12 +835,69 @@
       gap: 4px;
     }
 
+    .feed-top-btn {
+      position: fixed;
+      right: 20px;
+      bottom: 74px;
+      z-index: 998;
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid rgba(17, 17, 17, 0.12);
+      color: #2f6fe4;
+      box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px) scale(0.96);
+      transition: opacity .2s ease, transform .2s ease, border-color .2s ease, background-color .2s ease;
+    }
+
+    .feed-top-icon {
+      width: 20px;
+      height: 20px;
+      display: block;
+      stroke: currentColor;
+      stroke-width: 2.2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .feed-top-btn svg {
+      transform: translateY(-0.5px);
+    }
+
+    .feed-top-btn:hover {
+      background: rgba(255, 255, 255, 0.98);
+      border-color: rgba(47, 111, 228, 0.35);
+      color: #245ed0;
+      transform: translateY(-1px) scale(1);
+    }
+
+    .feed-top-btn:active {
+      transform: translateY(0) scale(0.97);
+    }
+
+    .feed-top-btn.show {
+      opacity: 0.96;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+    }
+
     @media (max-width: 1024px) {
       body { padding: 12px; }
       .app { grid-template-columns: 1fr; }
       .left { position: static; height: auto; }
       .right { min-height: 48vh; }
       .sidebar-float { left: 10px; bottom: 14px; }
+      .feed-top-btn { right: 10px; bottom: 60px; }
     }
   </style>
 </head>
@@ -741,6 +923,10 @@
       <div class="grid2">
         <button id="btn-compact">紧凑模式</button>
         <button id="btn-clear" class="warn">清空缓存</button>
+      </div>
+
+      <div class="field">
+        <button id="btn-aggregate" class="active">消息聚合: 开</button>
       </div>
 
       <div class="field">
@@ -789,16 +975,28 @@
         <h2>实时电报流</h2>
         <span class="badge" id="updated">未更新</span>
       </div>
+      <div class="feed-section-switch">
+        <button id="btn-section-headline" class="section-pill" type="button">头条</button>
+        <button id="btn-section-realtime" class="section-pill active" type="button">实时流</button>
+      </div>
       <div class="feed" id="feed"></div>
     </main>
   </div>
 
   <button id="btn-sidebar-float" class="sidebar-float" type="button">展开</button>
+  <button id="btn-feed-top" class="feed-top-btn" type="button" aria-label="回到顶端" title="回到顶端">
+    <svg class="feed-top-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 20V6"></path>
+      <path d="M6 12l6-6 6 6"></path>
+    </svg>
+  </button>
   <div class="toast" id="toast"></div>
 
   <script>
-    const STORE_KEY = 'cls_auto_telegraph_feed_v2';
+    const STORE_KEY = 'cls_auto_telegraph_feed_v3';
+    const AI_STORE_KEY = 'cls_auto_telegraph_ai_v1';
     const MAX_ITEMS = 1000;
+    const MAX_AI_ITEMS = 600;
     const SOURCE_NAME_MAP = {
       cls: '财联社',
       eastmoney: '东方财富',
@@ -815,6 +1013,8 @@
       analyzing: new Set(),
       keyword: '',
       sourceFilter: 'all',
+      aggregateMode: true,
+      topSection: 'realtime',
       sidebarCollapsed: false,
       compact: false,
       auto: true,
@@ -838,6 +1038,9 @@
       btnRefresh: document.getElementById('btn-refresh'),
       btnCompact: document.getElementById('btn-compact'),
       btnClear: document.getElementById('btn-clear'),
+      btnAggregate: document.getElementById('btn-aggregate'),
+      btnSectionHeadline: document.getElementById('btn-section-headline'),
+      btnSectionRealtime: document.getElementById('btn-section-realtime'),
       btnSidebar: document.getElementById('btn-sidebar'),
       btnSidebarFloat: document.getElementById('btn-sidebar-float'),
       interval: document.getElementById('interval'),
@@ -848,6 +1051,7 @@
       statusText: document.getElementById('statusText'),
       lastSync: document.getElementById('lastSync'),
       apiInfo: document.getElementById('apiInfo'),
+      btnFeedTop: document.getElementById('btn-feed-top'),
     };
 
     function normalizeKnownSource(source) {
@@ -996,17 +1200,96 @@
       return out;
     }
 
+    function keywordParts() {
+      const keyword = state.keyword.trim();
+      if (!keyword) return [];
+      return keyword.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    function matchesSourceFilter(item) {
+      if (state.sourceFilter === 'all') return true;
+      return normalizeSource(item && item.source, '') === state.sourceFilter;
+    }
+
+    function matchesKeywordFilter(item, parts = null) {
+      const words = Array.isArray(parts) ? parts : keywordParts();
+      if (!words.length) return true;
+      const target = `${item && item.title ? item.title : ''} ${item && item.text ? item.text : ''}`;
+      return words.some(k => target.includes(k));
+    }
+
     function passFilter(item) {
-      if (state.sourceFilter !== 'all' && normalizeSource(item.source, '') !== state.sourceFilter) {
-        return false;
+      return matchesSourceFilter(item) && matchesKeywordFilter(item);
+    }
+
+    function passClusterFilter(cluster, parts = null) {
+      const items = cluster && Array.isArray(cluster.items) ? cluster.items : [];
+      if (!items.length) return false;
+      const sourceMatch = state.sourceFilter === 'all'
+        ? true
+        : items.some(it => matchesSourceFilter(it));
+      if (!sourceMatch) return false;
+      const words = Array.isArray(parts) ? parts : keywordParts();
+      if (!words.length) return true;
+      return items.some(it => matchesKeywordFilter(it, words));
+    }
+
+    function normalizeForCluster(text) {
+      return String(text || '')
+        .toLowerCase()
+        .replace(/https?:\/\/\S+/g, ' ')
+        .replace(/^【[^】]{2,30}】\s*/g, '')
+        .replace(/^(财联社|新浪财经|华尔街见闻|同花顺|东方财富)(\d{1,2}月\d{1,2}日)?电[，,:：\s]*/g, '')
+        .replace(/^[\u4e00-\u9fa5a-z0-9%]{0,16}电[，,:：\s]*/g, '')
+        .replace(/[^\u4e00-\u9fa5a-z0-9%]+/g, '')
+        .trim();
+    }
+
+    function comparableHeadline(item) {
+      const titleNorm = normalizeForCluster(item && item.title);
+      if (titleNorm.length >= 10) return titleNorm;
+      const textNorm = normalizeForCluster(item && item.text);
+      if (textNorm.length >= 24) return textNorm.slice(0, 32);
+      return textNorm;
+    }
+
+    function clusterSignature(item) {
+      const head = comparableHeadline(item);
+      if (head.length >= 10) return `h:${head.slice(0, 72)}`;
+      const body = normalizeForCluster(item && item.text);
+      if (body.length >= 18) return `x:${body.slice(0, 44)}`;
+      return `u:${item && item.uid ? item.uid : ''}`;
+    }
+
+    function isSameEvent(lhs, rhs, lhsSignature, rhsSignature) {
+      const lc = Number(lhs && lhs.ctime) || 0;
+      const rc = Number(rhs && rhs.ctime) || 0;
+      if (lc > 0 && rc > 0 && Math.abs(lc - rc) > 2 * 60 * 60) return false;
+
+      if (lhsSignature === rhsSignature && !String(lhsSignature || '').startsWith('u:')) {
+        return true;
       }
 
-      const keyword = state.keyword.trim();
-      if (!keyword) return true;
-      const parts = keyword.split(',').map(s => s.trim()).filter(Boolean);
-      if (!parts.length) return true;
-      const target = `${item.title || ''} ${item.text || ''}`;
-      return parts.some(k => target.includes(k));
+      const lh = comparableHeadline(lhs);
+      const rh = comparableHeadline(rhs);
+      if (lh.length >= 10 && rh.length >= 10 && lh === rh) return true;
+
+      const lx = normalizeForCluster(lhs && lhs.text);
+      const rx = normalizeForCluster(rhs && rhs.text);
+      if (lx.length >= 24 && rx.length >= 24 && lx.slice(0, 32) === rx.slice(0, 32)) return true;
+
+      if (lh.length >= 12 && rh.length >= 12) {
+        const lp = lh.slice(0, 22);
+        const rp = rh.slice(0, 22);
+        if (lp.length >= 12 && rp.length >= 12 && (lp === rp || lh.startsWith(rp) || rh.startsWith(lp))) {
+          return true;
+        }
+      }
+
+      if (lh.length >= 12 && rx.length >= 20 && rx.startsWith(lh.slice(0, 20))) return true;
+      if (rh.length >= 12 && lx.length >= 20 && lx.startsWith(rh.slice(0, 20))) return true;
+
+      return false;
     }
 
     function levelClass(level) {
@@ -1022,16 +1305,111 @@
       return lv || '-';
     }
 
+    function isHeadlineLevel(level) {
+      const lv = String(level || '').trim().toUpperCase();
+      return lv.startsWith('A') || lv.startsWith('B');
+    }
+
+    function isHeadlineItem(item) {
+      return isHeadlineLevel(item && item.level);
+    }
+
+    function isHeadlineCluster(cluster) {
+      return Boolean(cluster && cluster.primary && isHeadlineItem(cluster.primary));
+    }
+
+    function levelRank(level) {
+      const lv = String(level || '').trim().toUpperCase();
+      if (lv.startsWith('A')) return 3;
+      if (lv.startsWith('B')) return 2;
+      return 1;
+    }
+
+    function itemPrioritySort(lhs, rhs) {
+      const l = levelRank(lhs && lhs.level);
+      const r = levelRank(rhs && rhs.level);
+      if (l !== r) return l > r;
+      const lc = Number(lhs && lhs.ctime) || 0;
+      const rc = Number(rhs && rhs.ctime) || 0;
+      if (lc !== rc) return lc > rc;
+      return String(lhs && lhs.uid ? lhs.uid : '') > String(rhs && rhs.uid ? rhs.uid : '');
+    }
+
+    function buildClusters(items) {
+      if (!Array.isArray(items) || !items.length) return [];
+
+      const buckets = [];
+      const bucketSignatures = [];
+
+      for (const item of items) {
+        const sign = clusterSignature(item);
+        let matchedIndex = -1;
+
+        for (let idx = 0; idx < buckets.length; idx += 1) {
+          const representative = buckets[idx] && buckets[idx][0];
+          if (!representative) continue;
+          if (isSameEvent(item, representative, sign, bucketSignatures[idx])) {
+            matchedIndex = idx;
+            break;
+          }
+        }
+
+        if (matchedIndex >= 0) {
+          buckets[matchedIndex].push(item);
+        } else {
+          buckets.push([item]);
+          bucketSignatures.push(sign);
+        }
+      }
+
+      const clusters = buckets.map((group) => {
+        const sorted = group.slice().sort(itemPrioritySort);
+        return {
+          id: sorted[0] ? sorted[0].uid : '',
+          primary: sorted[0] || null,
+          items: sorted,
+        };
+      }).filter(c => c.primary);
+
+      clusters.sort((a, b) => {
+        const ac = Number(a.primary && a.primary.ctime) || 0;
+        const bc = Number(b.primary && b.primary.ctime) || 0;
+        if (ac !== bc) return bc - ac;
+        return String(b.primary.uid || '').localeCompare(String(a.primary.uid || ''));
+      });
+
+      return clusters;
+    }
+
     function save() {
       const payload = {
-        v: 2,
+        v: 3,
         list: state.list.slice(0, MAX_ITEMS),
         expanded: Array.from(state.expanded).slice(0, MAX_ITEMS),
-        analysis: state.analysis,
         sourceFilter: state.sourceFilter,
+        aggregateMode: Boolean(state.aggregateMode),
+        topSection: state.topSection,
         sidebarCollapsed: Boolean(state.sidebarCollapsed),
       };
-      localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+      try {
+        localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+      } catch (_) {}
+      saveAiStore();
+    }
+
+    function saveAiStore() {
+      try {
+        const entries = [];
+        for (const item of state.list) {
+          const uid = String(item && item.uid ? item.uid : '').trim();
+          if (!uid) continue;
+          const analysis = state.analysis[uid];
+          if (!analysis || typeof analysis !== 'object') continue;
+          entries.push([uid, analysis]);
+          if (entries.length >= MAX_AI_ITEMS) break;
+        }
+        localStorage.setItem(AI_STORE_KEY, JSON.stringify({ v: 1, entries }));
+      } catch (_) {}
     }
 
     function cleanupExpandedState() {
@@ -1061,12 +1439,20 @@
 
     function load() {
       try {
-        const rawV2 = localStorage.getItem(STORE_KEY);
+        const rawCurrent = localStorage.getItem(STORE_KEY);
+        const rawLegacyV2 = localStorage.getItem('cls_auto_telegraph_feed_v2');
         const rawV1 = localStorage.getItem('cls_auto_telegraph_feed_v1');
 
         let parsed = null;
-        if (rawV2) {
-          const data = JSON.parse(rawV2);
+        if (rawCurrent) {
+          const data = JSON.parse(rawCurrent);
+          if (Array.isArray(data)) {
+            parsed = { list: data };
+          } else if (data && typeof data === 'object' && Array.isArray(data.list)) {
+            parsed = data;
+          }
+        } else if (rawLegacyV2) {
+          const data = JSON.parse(rawLegacyV2);
           if (Array.isArray(data)) {
             parsed = { list: data };
           } else if (data && typeof data === 'object' && Array.isArray(data.list)) {
@@ -1104,10 +1490,38 @@
         if (parsed.analysis && typeof parsed.analysis === 'object') {
           state.analysis = parsed.analysis;
         }
+
+        const rawAi = localStorage.getItem(AI_STORE_KEY);
+        if (rawAi) {
+          const aiData = JSON.parse(rawAi);
+          const merged = Object.assign(Object.create(null), state.analysis);
+          if (aiData && typeof aiData === 'object' && Array.isArray(aiData.entries)) {
+            for (const pair of aiData.entries) {
+              if (!Array.isArray(pair) || pair.length < 2) continue;
+              const uid = String(pair[0] || '').trim();
+              const val = pair[1];
+              if (!uid || !val || typeof val !== 'object') continue;
+              merged[uid] = val;
+            }
+          } else if (aiData && typeof aiData === 'object') {
+            for (const uid of Object.keys(aiData)) {
+              const val = aiData[uid];
+              if (!val || typeof val !== 'object') continue;
+              merged[uid] = val;
+            }
+          }
+          state.analysis = merged;
+        }
         cleanupAnalysisState();
 
         if (parsed.sourceFilter === 'all' || SOURCE_NAME_MAP[parsed.sourceFilter]) {
           state.sourceFilter = parsed.sourceFilter;
+        }
+        if (typeof parsed.aggregateMode === 'boolean') {
+          state.aggregateMode = parsed.aggregateMode;
+        }
+        if (parsed.topSection === 'headline' || parsed.topSection === 'realtime') {
+          state.topSection = parsed.topSection;
         }
         if (typeof parsed.sidebarCollapsed === 'boolean') {
           state.sidebarCollapsed = parsed.sidebarCollapsed;
@@ -1253,13 +1667,60 @@
       }
     }
 
-    function buildItemNode(item, animateEnter = false) {
+    function uniqueSourceNames(items) {
+      const seen = new Set();
+      const out = [];
+      for (const it of (Array.isArray(items) ? items : [])) {
+        const name = sourceName(it && it.source, it && it.sourceName);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        out.push(name);
+      }
+      return out;
+    }
+
+    function buildClusterExtraHtml(cluster) {
+      const items = cluster && Array.isArray(cluster.items) ? cluster.items : [];
+      if (items.length <= 1) return '';
+
+      const mergedCount = items.length;
+      const names = uniqueSourceNames(items);
+      const variants = items.slice(1);
+      const variantsHtml = variants.map((it) => {
+        const raw = String((it && it.title) || (it && it.text) || '').replace(/\s+/g, ' ').trim();
+        const preview = raw.length > 110 ? `${raw.slice(0, 110)}...` : raw;
+        return `
+          <div class="cluster-row">
+            <div class="cluster-row-head">
+              <span class="cluster-row-time">${escapeHTML(String(it && it.time ? it.time : '--:--:--'))}</span>
+              <span class="cluster-row-source">${escapeHTML(sourceName(it && it.source, it && it.sourceName))}</span>
+            </div>
+            <div class="cluster-row-text">${highlight(preview, state.keyword)}</div>
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="cluster-meta">聚合 ${mergedCount} 条${names.length ? ` · ${escapeHTML(names.join(' / '))}` : ''}</div>
+        <details class="cluster-wrap"><summary>查看同事件 ${mergedCount - 1} 条</summary><div class="cluster-list">${variantsHtml}</div></details>
+      `;
+    }
+
+    function clusterHasAnimatedUID(cluster, animateSet) {
+      if (!cluster || !cluster.items || !animateSet || !animateSet.size) return false;
+      for (const it of cluster.items) {
+        if (animateSet.has(it.uid)) return true;
+      }
+      return false;
+    }
+
+    function buildItemNode(item, animateEnter = false, cluster = null) {
       const lvClass = levelClass(item.level);
-      const lvText = levelText(item.level);
       const hasTitle = Boolean(String(item.title || '').trim());
       const hasBody = Boolean(String(item.text || '').trim());
       const bodyHtml = hasBody ? `<div class="text">${highlight(item.text || '', state.keyword)}</div>` : '';
       const expandedAttr = state.expanded.has(item.uid) ? ' open' : '';
+      const clusterExtraHtml = buildClusterExtraHtml(cluster);
       const contentHtml = hasTitle
         ? (hasBody
           ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>展开全文</summary>${bodyHtml}</details>`
@@ -1278,11 +1739,11 @@
           <span class="item-time">${escapeHTML(item.time || '--:--:--')}</span>
           <span class="item-tags">
             <span class="source-badge ${sourceClass(item.source)}">${escapeHTML(sourceName(item.source, item.sourceName))}</span>
-            <span class="lv lv-${lvClass}">L${escapeHTML(lvText)}</span>
           </span>
         </div>
         ${item.title ? `<div class="title-row">${highlight(item.title, state.keyword)}</div>` : ''}
         ${contentHtml}
+        ${clusterExtraHtml}
         <div class="meta-row">
           <div class="meta">
             ${item.author ? `<span>来源：${escapeHTML(item.author)}</span>` : ''}
@@ -1304,30 +1765,106 @@
       }, 500);
     }
 
-    function render(animateUids = null) {
-      const list = state.list.filter(it => passFilter(it));
-      el.statTotal.textContent = String(state.list.length);
-      el.statVisible.textContent = String(list.length);
+    function isFeedNearTop() {
+      return el.feed.scrollTop <= 8;
+    }
 
-      if (!list.length) {
-        if (!el.feed.querySelector('.empty')) {
-          el.feed.innerHTML = '<div class="empty">暂无数据，点击“立即刷新”或等待自动同步。</div>';
+    function getActiveScrollTop() {
+      return Math.max(el.feed.scrollTop || 0, window.scrollY || 0);
+    }
+
+    function updateFeedTopButton() {
+      const shouldShow = getActiveScrollTop() > 120;
+      el.btnFeedTop.classList.toggle('show', shouldShow);
+    }
+
+    function setFeedScrollTop(top) {
+      const maxTop = Math.max(0, el.feed.scrollHeight - el.feed.clientHeight);
+      const target = Math.max(0, Math.min(maxTop, Number(top) || 0));
+      const oldInlineBehavior = el.feed.style.scrollBehavior;
+      el.feed.style.scrollBehavior = 'auto';
+      el.feed.scrollTop = target;
+      if (oldInlineBehavior) el.feed.style.scrollBehavior = oldInlineBehavior;
+      else el.feed.style.removeProperty('scroll-behavior');
+    }
+
+    function captureFeedAnchor() {
+      const feedTop = el.feed.getBoundingClientRect().top;
+      const cards = el.feed.querySelectorAll('article.item[data-uid]');
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (rect.bottom > feedTop + 1) {
+          return {
+            uid: String(card.dataset.uid || ''),
+            offsetTop: rect.top - feedTop,
+          };
         }
+      }
+      return null;
+    }
+
+    function restoreFeedAnchor(anchor) {
+      if (!anchor || !anchor.uid) return;
+      const target = findCardByUid(anchor.uid);
+      if (!target) return;
+      const feedTop = el.feed.getBoundingClientRect().top;
+      const rect = target.getBoundingClientRect();
+      const delta = rect.top - feedTop - Number(anchor.offsetTop || 0);
+      if (Math.abs(delta) > 0.5) {
+        setFeedScrollTop(el.feed.scrollTop + delta);
+      }
+    }
+
+    function render(animateUids = null, options = {}) {
+      const preserveViewport = Boolean(options && options.preserveViewport);
+      const anchor = preserveViewport ? captureFeedAnchor() : null;
+      const words = keywordParts();
+      const isHeadline = state.topSection === 'headline';
+      const allList = state.list.filter(it => passFilter(it));
+      const list = isHeadline ? allList.filter(isHeadlineItem) : allList;
+      const allClusters = state.aggregateMode
+        ? buildClusters(state.list).filter(c => passClusterFilter(c, words))
+        : [];
+      const clusters = isHeadline ? allClusters.filter(isHeadlineCluster) : allClusters;
+      el.statTotal.textContent = String(state.list.length);
+      el.statVisible.textContent = state.aggregateMode ? `${clusters.length}组` : String(list.length);
+
+      if ((!state.aggregateMode && !list.length) || (state.aggregateMode && !clusters.length)) {
+        const emptyText = isHeadline
+          ? '暂无 A/B 级头条，等待新电报。'
+          : '暂无数据，点击“立即刷新”或等待自动同步。';
+        el.feed.innerHTML = `<div class="empty">${emptyText}</div>`;
+        updateFeedTopButton();
         return;
       }
 
       const animateSet = animateUids ? new Set(animateUids) : new Set();
       const frag = document.createDocumentFragment();
-      for (const item of list) {
-        frag.appendChild(buildItemNode(item, animateSet.has(item.uid)));
+      if (state.aggregateMode) {
+        for (const cluster of clusters) {
+          frag.appendChild(buildItemNode(
+            cluster.primary,
+            clusterHasAnimatedUID(cluster, animateSet),
+            cluster
+          ));
+        }
+      } else {
+        for (const item of list) {
+          frag.appendChild(buildItemNode(item, animateSet.has(item.uid)));
+        }
       }
       el.feed.replaceChildren(frag);
+      if (anchor) restoreFeedAnchor(anchor);
       if (animateSet.size > 0) scheduleClearEnterClass();
+      updateFeedTopButton();
     }
 
-    function prependNewItems(newUids) {
+    function prependNewItems(newUids, options = {}) {
+      if (state.aggregateMode || state.topSection === 'headline') return false;
       const uidSet = new Set(Array.isArray(newUids) ? newUids : []);
       if (!uidSet.size) return false;
+      const preserveViewport = Boolean(options && options.preserveViewport);
+      const anchor = preserveViewport ? captureFeedAnchor() : null;
 
       const list = state.list.filter(it => uidSet.has(it.uid) && passFilter(it));
       if (!list.length) return false;
@@ -1350,7 +1887,9 @@
         nodes[i].remove();
       }
 
+      if (anchor) restoreFeedAnchor(anchor);
       scheduleClearEnterClass();
+      updateFeedTopButton();
       return true;
     }
 
@@ -1373,6 +1912,17 @@
       el.app.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
       el.btnSidebar.textContent = state.sidebarCollapsed ? '展开面板' : '折叠面板';
       el.btnSidebarFloat.classList.toggle('show', state.sidebarCollapsed);
+    }
+
+    function applyAggregateState() {
+      el.btnAggregate.classList.toggle('active', state.aggregateMode);
+      el.btnAggregate.textContent = `消息聚合: ${state.aggregateMode ? '开' : '关'}`;
+    }
+
+    function applyTopSectionState() {
+      const headline = state.topSection === 'headline';
+      el.btnSectionHeadline.classList.toggle('active', headline);
+      el.btnSectionRealtime.classList.toggle('active', !headline);
     }
 
     async function syncOnce() {
@@ -1405,11 +1955,14 @@
         setStatus('ok', state.auto ? '自动刷新中' : '已手动更新');
         state.lastError = '';
         if (added > 0) {
+          const preserveViewport = !isFeedNearTop();
           const canIncrementalInsert =
+            !state.aggregateMode &&
+            state.topSection === 'realtime' &&
             state.keyword.trim() === '' &&
             state.sourceFilter === 'all';
-          if (!canIncrementalInsert || !prependNewItems(mergeResult.newUids)) {
-            render(mergeResult.newUids);
+          if (!canIncrementalInsert || !prependNewItems(mergeResult.newUids, { preserveViewport })) {
+            render(mergeResult.newUids, { preserveViewport });
           }
         }
       } catch (err) {
@@ -1450,6 +2003,29 @@
         el.btnCompact.classList.toggle('active', state.compact);
       });
 
+      el.btnAggregate.addEventListener('click', () => {
+        state.aggregateMode = !state.aggregateMode;
+        applyAggregateState();
+        save();
+        render();
+      });
+
+      el.btnSectionHeadline.addEventListener('click', () => {
+        if (state.topSection === 'headline') return;
+        state.topSection = 'headline';
+        applyTopSectionState();
+        save();
+        render();
+      });
+
+      el.btnSectionRealtime.addEventListener('click', () => {
+        if (state.topSection === 'realtime') return;
+        state.topSection = 'realtime';
+        applyTopSectionState();
+        save();
+        render();
+      });
+
       el.btnClear.addEventListener('click', () => {
         if (!confirm('确认清空本地缓存的所有电报吗？')) return;
         state.list = [];
@@ -1457,6 +2033,7 @@
         state.expanded.clear();
         state.analysis = Object.create(null);
         state.analyzing.clear();
+        try { localStorage.removeItem(AI_STORE_KEY); } catch (_) {}
         save();
         render();
         showToast('已清空缓存');
@@ -1517,14 +2094,25 @@
         applySidebarState();
         save();
       });
+
+      el.btnFeedTop.addEventListener('click', () => {
+        el.feed.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      el.feed.addEventListener('scroll', updateFeedTopButton, { passive: true });
+      window.addEventListener('scroll', updateFeedTopButton, { passive: true });
     }
 
     function init() {
       load();
       el.sourceFilter.value = state.sourceFilter;
       applySidebarState();
+      applyAggregateState();
+      applyTopSectionState();
       bind();
       render();
+      updateFeedTopButton();
       restartTimer();
       syncOnce();
     }

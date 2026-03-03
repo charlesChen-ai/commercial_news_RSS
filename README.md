@@ -30,7 +30,8 @@
 ├── cls-telegraph-proxy.js         # Node.js 聚合代理（抓取、解析、去重、API）
 ├── cls-telegraph-auto-viewer.html # 自动刷新前端页面
 ├── cls-telegraph-copy-viewer.html # 手动粘贴版本（保留）
-└── cls-telegraph-enhancer.user.js # 历史脚本（非主方案）
+├── cls-telegraph-enhancer.user.js # 历史脚本（非主方案）
+└── ios/CLSFeedApp                 # iOS SwiftUI 客户端（信息流 + 控制台）
 ```
 
 ## Architecture
@@ -69,13 +70,15 @@ PORT=8080 node cls-telegraph-proxy.js
 
 健康检查。
 
-### `GET /api/telegraph?limit=120`
+### `GET /api/telegraph?limit=120&sources=cls,sina,wscn`
 
 返回聚合后的快讯数据。
 
 参数：
 
 - `limit`：返回数量，范围 `20~500`，默认 `120`
+- `sources`：可选，逗号分隔来源列表；支持 `cls,eastmoney,sina,wscn,ths`
+  - 不传时默认全量来源
 
 主要返回字段：
 
@@ -84,6 +87,35 @@ PORT=8080 node cls-telegraph-proxy.js
 - `sources`：每个来源抓取状态（`ok/count/error`）
 - `dedupe`：去重统计（`before/afterUid/afterStrong/afterTitle/afterFuzzy`）
 - `cached`：是否命中 3 秒短缓存
+
+### `GET /api/ai/providers`
+
+返回后端内置的 AI provider 预设（`id/label/defaultApiBase/defaultModel`）与默认配置。
+
+### `POST /api/analyze`
+
+请求体在原始快讯字段外支持 `ai` 配置覆盖：
+
+```json
+{
+  "uid": "cls:123",
+  "source": "cls",
+  "time": "10:00:00",
+  "title": "标题",
+  "text": "正文",
+  "ai": {
+    "provider": "deepseek",
+    "apiKey": "your-key",
+    "apiBase": "https://api.deepseek.com/v1",
+    "model": "deepseek-chat"
+  }
+}
+```
+
+说明：
+
+- `provider` 支持：`deepseek/openai/gemini/custom`
+- `apiKey` / `apiBase` / `model` 为空时会回退到环境变量默认值
 
 `items` 单条字段：
 
@@ -153,6 +185,17 @@ export OPENAI_API_KEY=你的DeepSeekKey
 export OPENAI_API_BASE=https://api.deepseek.com/v1
 export OPENAI_MODEL=deepseek-chat
 ```
+
+也可以在调用 `/api/analyze` 时通过请求体 `ai` 字段按用户维度动态覆盖（适合移动端多用户场景）。
+
+## iOS App (SwiftUI)
+
+项目路径：`ios/CLSFeedApp`
+
+- Tab1「信息流」：展示聚合快讯流，支持下拉刷新、自动轮询、逐条 AI 分析
+- Tab2「控制台」：配置服务地址、勾选信息源、选择 AI provider、输入 API Key、编辑 API Base 与模型名
+
+> API Key 在 iOS 端存于 Keychain，再随分析请求下发给后端。
 
 ## Disclaimer
 

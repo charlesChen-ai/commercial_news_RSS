@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 
-const HOST = '0.0.0.0';
+const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT || 8066);
 const INDEX_FILE = path.join(__dirname, 'cls-telegraph-auto-viewer.html');
 
@@ -1371,7 +1371,13 @@ const server = http.createServer(async (req, res) => {
 
     if (requestUrl.pathname === '/api/telegraph' && method === 'GET') {
       const limit = parseLimit(requestUrl.searchParams);
-      const selectedSources = parseSources(requestUrl.searchParams);
+      let selectedSources;
+      try {
+        selectedSources = parseSources(requestUrl.searchParams);
+      } catch (_) {
+        sendJson(res, 400, { ok: false, error: 'invalid_sources' });
+        return;
+      }
       const data = await fetchAggregated(limit, selectedSources);
       sendJson(res, 200, data);
       return;
@@ -1398,6 +1404,18 @@ const server = http.createServer(async (req, res) => {
       }
 
       const runtimeConfig = resolveAiRuntimeConfig(body);
+      if (!runtimeConfig.apiKey) {
+        sendJson(res, 400, { ok: false, error: 'missing_ai_api_key' });
+        return;
+      }
+      if (!runtimeConfig.apiBase) {
+        sendJson(res, 400, { ok: false, error: 'missing_ai_api_base' });
+        return;
+      }
+      if (!runtimeConfig.model) {
+        sendJson(res, 400, { ok: false, error: 'missing_ai_model' });
+        return;
+      }
       const cacheKey = buildAiCacheKey(input, runtimeConfig);
       const cached = getAiCached(cacheKey);
       if (cached) {
