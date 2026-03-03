@@ -11,6 +11,7 @@ struct FeedView: View {
     @State private var showRecapSheet = false
     @State private var expandedClusterIDs: Set<String> = []
     @State private var selectedCluster: TelegraphCluster?
+    @State private var topSection: FeedTopSection = .headline
 
     var body: some View {
         NavigationStack {
@@ -37,49 +38,56 @@ struct FeedView: View {
                                 errorBanner(err)
                             }
 
+                            topSectionSwitcher
+
                             if viewModel.displayClusters.isEmpty, !viewModel.isLoading {
                                 emptyCard
                             } else {
-                                if !headlineClusters.isEmpty {
+                                if topSection == .headline {
                                     sectionCard(
                                         title: "头条",
                                         subtitle: "A/B级高优先快讯",
                                         icon: "flame.fill",
                                         tint: .red
                                     ) {
-                                        ForEach(headlineClusters) { cluster in
-                                            clusterCell(cluster, keywordHits: [])
+                                        if headlineClusters.isEmpty {
+                                            Text("当前暂无头条")
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                                .padding(.vertical, 4)
+                                        } else {
+                                            ForEach(headlineClusters) { cluster in
+                                                clusterCell(cluster, keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList))
+                                            }
                                         }
                                     }
-                                }
-
-                                if !keywordHitClusters.isEmpty {
+                                } else {
                                     sectionCard(
-                                        title: "关注命中",
-                                        subtitle: "命中你的关键词订阅",
-                                        icon: "bell.badge.fill",
-                                        tint: .orange
+                                        title: "实时流",
+                                        subtitle: "按时间持续更新",
+                                        icon: "bolt.horizontal.fill",
+                                        tint: .blue
                                     ) {
-                                        ForEach(keywordHitClusters) { cluster in
-                                            clusterCell(cluster, keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList))
+                                        if !keywordHitClusters.isEmpty {
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "bell.badge.fill")
+                                                    .foregroundStyle(.orange)
+                                                Text("关注命中 \(keywordHitClusters.count) 条，已优先置顶")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                            }
                                         }
-                                    }
-                                }
 
-                                sectionCard(
-                                    title: "实时流",
-                                    subtitle: "按时间持续更新",
-                                    icon: "bolt.horizontal.fill",
-                                    tint: .blue
-                                ) {
-                                    if realtimeClusters.isEmpty {
-                                        Text("暂无更多实时流内容")
-                                            .font(.footnote)
-                                            .foregroundStyle(.secondary)
-                                            .padding(.vertical, 4)
-                                    } else {
-                                        ForEach(realtimeClusters) { cluster in
-                                            clusterCell(cluster, keywordHits: [])
+                                        if realtimeClusters.isEmpty {
+                                            Text("暂无更多实时流内容")
+                                                .font(.footnote)
+                                                .foregroundStyle(.secondary)
+                                                .padding(.vertical, 4)
+                                        } else {
+                                            ForEach(realtimeClusters) { cluster in
+                                                clusterCell(cluster, keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList))
+                                            }
                                         }
                                     }
                                 }
@@ -118,6 +126,20 @@ struct FeedView: View {
                     .refreshable {
                         await viewModel.refresh(using: settings)
                     }
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 28)
+                            .onEnded { value in
+                                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                                guard abs(value.translation.width) > 56 else { return }
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if value.translation.width < 0 {
+                                        topSection = .realtime
+                                    } else {
+                                        topSection = .headline
+                                    }
+                                }
+                            }
+                    )
                 }
             }
             .navigationTitle("快讯信息流")
@@ -233,8 +255,48 @@ struct FeedView: View {
     }
 
     private var realtimeClusters: [TelegraphCluster] {
-        let highlighted = Set(headlineClusters.map(\.primary.uid)).union(keywordHitClusters.map(\.primary.uid))
-        return viewModel.displayClusters.filter { !highlighted.contains($0.primary.uid) }
+        let headlineUIDs = Set(headlineClusters.map(\.primary.uid))
+        let base = viewModel.displayClusters.filter { !headlineUIDs.contains($0.primary.uid) }
+        let keywordUIDs = Set(keywordHitClusters.map(\.primary.uid))
+        let matched = base.filter { keywordUIDs.contains($0.primary.uid) }
+        let others = base.filter { !keywordUIDs.contains($0.primary.uid) }
+        return matched + others
+    }
+
+    private var topSectionSwitcher: some View {
+        HStack(spacing: 10) {
+            topSectionButton(.headline, title: "头条", icon: "flame.fill")
+            topSectionButton(.realtime, title: "实时流", icon: "bolt.horizontal.fill")
+            Spacer(minLength: 8)
+            Text("左右滑动切换")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private func topSectionButton(_ section: FeedTopSection, title: String, icon: String) -> some View {
+        let selected = topSection == section
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                topSection = section
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(selected ? .white : .primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    selected ? Color.blue : Color(uiColor: .secondarySystemBackground),
+                    in: Capsule()
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.black.opacity(selected ? 0 : 0.08), lineWidth: selected ? 0 : 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func matchedKeywords(for cluster: TelegraphCluster, keywords: [String]) -> [String] {
@@ -487,4 +549,9 @@ private struct FeedScrollOffsetKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
+}
+
+private enum FeedTopSection {
+    case headline
+    case realtime
 }
