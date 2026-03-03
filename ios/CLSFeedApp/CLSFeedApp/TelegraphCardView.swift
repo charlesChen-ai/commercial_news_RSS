@@ -83,13 +83,6 @@ struct TelegraphCardView: View {
                 .padding(.vertical, 4)
                 .background(Color.blue.opacity(0.12), in: Capsule())
                 .foregroundStyle(.blue)
-
-            Text(item.level.uppercased())
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(levelColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(levelColor.opacity(0.13), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
     }
 
@@ -405,17 +398,6 @@ struct TelegraphCardView: View {
             return Color.orange.opacity(0.82)
         default:
             return nil
-        }
-    }
-
-    private var levelColor: Color {
-        switch item.level.uppercased() {
-        case "A":
-            return .red
-        case "B":
-            return .orange
-        default:
-            return .secondary
         }
     }
 
