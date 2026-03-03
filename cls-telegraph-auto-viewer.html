@@ -270,6 +270,27 @@
       margin-bottom: 9px;
     }
 
+    .item.item-enter {
+      animation: item-insert .78s cubic-bezier(.16, .84, .26, 1) both;
+      will-change: transform, opacity, box-shadow;
+    }
+
+    @keyframes item-insert {
+      0% {
+        opacity: 0;
+        transform: translateX(-28px);
+        box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+      }
+      72% {
+        opacity: 1;
+        transform: translateX(2px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
     .item.level-a {
       border-left-color: #dc2626;
       background: linear-gradient(90deg, rgba(220, 38, 38, 0.06) 0, rgba(255, 255, 255, 0.96) 22px, rgba(255, 255, 255, 0.96) 100%);
@@ -294,11 +315,29 @@
     .item-head {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: space-between;
       gap: 8px;
       margin-bottom: 6px;
       font-size: 12px;
       color: var(--muted);
+    }
+
+    .item-time {
+      font-family: "DIN Alternate", "Roboto Mono", "SFMono-Regular", "Consolas", monospace;
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: 0.2px;
+      color: #b45309;
+      white-space: nowrap;
+      line-height: 1;
+    }
+
+    .item-tags {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: nowrap;
+      white-space: nowrap;
     }
 
     .source-badge {
@@ -306,7 +345,6 @@
       border: 1px solid transparent;
       padding: 1px 8px;
       font-weight: 600;
-      margin-right: 6px;
       white-space: nowrap;
     }
 
@@ -442,6 +480,151 @@
       flex-wrap: wrap;
     }
 
+    .meta-row {
+      margin-top: 8px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .meta-row .meta {
+      margin-top: 0;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ai-btn {
+      width: auto;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      line-height: 1;
+      color: #075985;
+      background: rgba(14, 165, 233, 0.1);
+      border: 1px solid rgba(14, 165, 233, 0.28);
+      white-space: nowrap;
+    }
+
+    .ai-btn:hover {
+      border-color: rgba(14, 165, 233, 0.45);
+    }
+
+    .ai-btn.loading {
+      color: #92400e;
+      border-color: rgba(245, 158, 11, 0.3);
+      background: rgba(245, 158, 11, 0.12);
+      cursor: wait;
+    }
+
+    .ai-btn.done {
+      color: #0f766e;
+      border-color: rgba(15, 118, 110, 0.3);
+      background: rgba(15, 118, 110, 0.1);
+    }
+
+    .ai-panel {
+      margin-top: 7px;
+      border-radius: 10px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: rgba(248, 250, 252, 0.92);
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .ai-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+
+    .ai-chip {
+      border-radius: 999px;
+      border: 1px solid transparent;
+      padding: 1px 7px;
+      font-weight: 700;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .ai-chip.bullish {
+      color: #14532d;
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.28);
+    }
+
+    .ai-chip.bearish {
+      color: #7f1d1d;
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.28);
+    }
+
+    .ai-chip.neutral {
+      color: #334155;
+      background: rgba(100, 116, 139, 0.12);
+      border-color: rgba(100, 116, 139, 0.24);
+    }
+
+    .ai-score {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .ai-summary {
+      color: #334155;
+      margin: 4px 0 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .ai-bullets {
+      margin: 5px 0 0;
+      padding-left: 16px;
+      color: #475569;
+    }
+
+    .ai-targets {
+      margin-top: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .ai-target-title {
+      font-size: 11px;
+      color: #64748b;
+      margin-right: 2px;
+    }
+
+    .ai-target {
+      border-radius: 999px;
+      border: 1px solid transparent;
+      padding: 1px 8px;
+      font-size: 11px;
+      line-height: 1.3;
+      white-space: nowrap;
+      color: #334155;
+      border-color: rgba(100, 116, 139, 0.24);
+      background: rgba(100, 116, 139, 0.12);
+    }
+
+    .ai-target.bullish {
+      color: #14532d;
+      border-color: rgba(34, 197, 94, 0.28);
+      background: rgba(34, 197, 94, 0.12);
+    }
+
+    .ai-target.bearish {
+      color: #7f1d1d;
+      border-color: rgba(239, 68, 68, 0.28);
+      background: rgba(239, 68, 68, 0.12);
+    }
+
     mark {
       background: #fde68a;
       color: #111827;
@@ -497,11 +680,11 @@
 
     .sidebar-float {
       position: fixed;
-      left: 20px;
-      top: 20px;
+      left: 14px;
+      bottom: 20px;
       z-index: 999;
       width: auto;
-      padding: 8px 12px;
+      padding: 6px 10px;
       border-radius: 999px;
       background: rgba(255, 255, 255, 0.96);
       border: 1px solid rgba(12, 74, 110, 0.22);
@@ -510,6 +693,15 @@
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       display: none;
+      font-size: 12px;
+      opacity: 0.62;
+      transition: opacity .18s ease, transform .18s ease, border-color .18s ease;
+    }
+
+    .sidebar-float:hover {
+      opacity: 0.95;
+      transform: translateY(-1px);
+      border-color: rgba(12, 74, 110, 0.38);
     }
 
     .sidebar-float.show {
@@ -523,7 +715,7 @@
       .app { grid-template-columns: 1fr; }
       .left { position: static; height: auto; }
       .right { min-height: 48vh; }
-      .sidebar-float { top: 12px; left: 12px; }
+      .sidebar-float { left: 10px; bottom: 14px; }
     }
   </style>
 </head>
@@ -601,7 +793,7 @@
     </main>
   </div>
 
-  <button id="btn-sidebar-float" class="sidebar-float" type="button">展开面板</button>
+  <button id="btn-sidebar-float" class="sidebar-float" type="button">展开</button>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -619,6 +811,8 @@
       list: [],
       seen: new Set(),
       expanded: new Set(),
+      analysis: Object.create(null),
+      analyzing: new Set(),
       keyword: '',
       sourceFilter: 'all',
       sidebarCollapsed: false,
@@ -627,6 +821,7 @@
       intervalSec: 8,
       limit: 120,
       timer: null,
+      enterTimer: null,
       loading: false,
       lastError: '',
     };
@@ -832,6 +1027,7 @@
         v: 2,
         list: state.list.slice(0, MAX_ITEMS),
         expanded: Array.from(state.expanded).slice(0, MAX_ITEMS),
+        analysis: state.analysis,
         sourceFilter: state.sourceFilter,
         sidebarCollapsed: Boolean(state.sidebarCollapsed),
       };
@@ -845,6 +1041,18 @@
       for (const uid of Array.from(state.expanded)) {
         if (!valid.has(uid)) {
           state.expanded.delete(uid);
+          changed = true;
+        }
+      }
+      return changed;
+    }
+
+    function cleanupAnalysisState() {
+      const valid = new Set(state.list.map(it => it.uid));
+      let changed = false;
+      for (const uid of Object.keys(state.analysis)) {
+        if (!valid.has(uid)) {
+          delete state.analysis[uid];
           changed = true;
         }
       }
@@ -893,6 +1101,11 @@
         }
         cleanupExpandedState();
 
+        if (parsed.analysis && typeof parsed.analysis === 'object') {
+          state.analysis = parsed.analysis;
+        }
+        cleanupAnalysisState();
+
         if (parsed.sourceFilter === 'all' || SOURCE_NAME_MAP[parsed.sourceFilter]) {
           state.sourceFilter = parsed.sourceFilter;
         }
@@ -904,6 +1117,7 @@
 
     function merge(newItems) {
       let added = 0;
+      const newUids = [];
       for (let i = newItems.length - 1; i >= 0; i -= 1) {
         const item = normalizeItem(newItems[i]);
         if (!item || !item.uid) continue;
@@ -914,56 +1128,230 @@
         }
         state.seen.add(item.uid);
         state.list.unshift(item);
+        newUids.push(item.uid);
         added += 1;
       }
       state.list = dedupeListByExactTitle(state.list);
       if (state.list.length > MAX_ITEMS) state.list.length = MAX_ITEMS;
       const expandedChanged = cleanupExpandedState();
-      if (added > 0 || expandedChanged) save();
-      return added;
+      const analysisChanged = cleanupAnalysisState();
+      if (added > 0 || expandedChanged || analysisChanged) save();
+      return { added, newUids };
     }
 
-    function render() {
+    function sentimentLabel(sentiment) {
+      const s = String(sentiment || '').toLowerCase();
+      if (s === 'bullish') return '偏利好';
+      if (s === 'bearish') return '偏利空';
+      return '中性';
+    }
+
+    function renderAiPanel(analysis) {
+      if (!analysis || typeof analysis !== 'object') return '';
+      const sentiment = String(analysis.sentiment || 'neutral').toLowerCase();
+      const sentimentClass = sentiment === 'bullish' ? 'bullish' : (sentiment === 'bearish' ? 'bearish' : 'neutral');
+      const positive = Array.isArray(analysis.positive_factors) ? analysis.positive_factors : [];
+      const negative = Array.isArray(analysis.negative_factors) ? analysis.negative_factors : [];
+      const bullishTargets = Array.isArray(analysis.bullish_targets) ? analysis.bullish_targets : [];
+      const bearishTargets = Array.isArray(analysis.bearish_targets) ? analysis.bearish_targets : [];
+      const impactTargets = Array.isArray(analysis.impact_targets) ? analysis.impact_targets : [];
+
+      const posHtml = positive.length
+        ? `<ul class="ai-bullets">${positive.map(x => `<li>利好：${escapeHTML(String(x))}</li>`).join('')}</ul>`
+        : '';
+      const negHtml = negative.length
+        ? `<ul class="ai-bullets">${negative.map(x => `<li>利空：${escapeHTML(String(x))}</li>`).join('')}</ul>`
+        : '';
+      const bullTargetHtml = bullishTargets.length
+        ? `<div class="ai-targets"><span class="ai-target-title">偏利好方向</span>${bullishTargets.map(x => `<span class="ai-target bullish">${escapeHTML(String(x))}</span>`).join('')}</div>`
+        : '';
+      const bearTargetHtml = bearishTargets.length
+        ? `<div class="ai-targets"><span class="ai-target-title">偏利空方向</span>${bearishTargets.map(x => `<span class="ai-target bearish">${escapeHTML(String(x))}</span>`).join('')}</div>`
+        : '';
+      const impactHtml = (!bullishTargets.length && !bearishTargets.length && impactTargets.length)
+        ? `<div class="ai-targets"><span class="ai-target-title">影响标的</span>${impactTargets.map(x => `<span class="ai-target">${escapeHTML(String(x))}</span>`).join('')}</div>`
+        : '';
+
+      return `
+        <div class="ai-panel">
+          <div class="ai-head">
+            <span class="ai-chip ${sentimentClass}">${escapeHTML(sentimentLabel(sentiment))}</span>
+            <span class="ai-score">分值 ${escapeHTML(String(analysis.score || 0))} / 置信度 ${escapeHTML(String(analysis.confidence || 0))}</span>
+          </div>
+          ${analysis.summary ? `<div class="ai-summary">${escapeHTML(String(analysis.summary))}</div>` : ''}
+          ${bullTargetHtml}
+          ${bearTargetHtml}
+          ${impactHtml}
+          ${posHtml}
+          ${negHtml}
+        </div>
+      `;
+    }
+
+    function findCardByUid(uid) {
+      const cards = el.feed.querySelectorAll('article.item[data-uid]');
+      for (const card of cards) {
+        if (String(card.dataset.uid || '') === String(uid || '')) return card;
+      }
+      return null;
+    }
+
+    function updateCardAnalysisUI(uid) {
+      const card = findCardByUid(uid);
+      if (!card) return;
+
+      const btn = card.querySelector('button[data-action="ai-analyze"]');
+      if (btn) {
+        const loading = state.analyzing.has(uid);
+        const done = Boolean(state.analysis[uid]);
+        btn.disabled = loading;
+        btn.classList.toggle('loading', loading);
+        btn.classList.toggle('done', !loading && done);
+        btn.textContent = loading ? '分析中...' : (done ? '重新分析' : 'AI分析');
+      }
+
+      const holder = card.querySelector('[data-ai-result]');
+      if (holder) {
+        holder.innerHTML = renderAiPanel(state.analysis[uid]);
+      }
+    }
+
+    async function requestAiAnalysis(uid) {
+      if (!uid || state.analyzing.has(uid)) return;
+      const item = state.list.find(it => it.uid === uid);
+      if (!item) return;
+
+      state.analyzing.add(uid);
+      updateCardAnalysisUI(uid);
+
+      try {
+        const resp = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            uid: item.uid,
+            source: item.source,
+            time: item.time,
+            title: item.title,
+            text: item.text,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error((data && data.error) || `http_${resp.status}`);
+        }
+        state.analysis[uid] = data.analysis || {};
+        save();
+        updateCardAnalysisUI(uid);
+        showToast(data.cached ? 'AI分析完成（缓存）' : 'AI分析完成');
+      } catch (err) {
+        const msg = err && err.message ? err.message : 'unknown_error';
+        showToast(`AI分析失败：${msg}`);
+      } finally {
+        state.analyzing.delete(uid);
+        updateCardAnalysisUI(uid);
+      }
+    }
+
+    function buildItemNode(item, animateEnter = false) {
+      const lvClass = levelClass(item.level);
+      const lvText = levelText(item.level);
+      const hasTitle = Boolean(String(item.title || '').trim());
+      const hasBody = Boolean(String(item.text || '').trim());
+      const bodyHtml = hasBody ? `<div class="text">${highlight(item.text || '', state.keyword)}</div>` : '';
+      const expandedAttr = state.expanded.has(item.uid) ? ' open' : '';
+      const contentHtml = hasTitle
+        ? (hasBody
+          ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>展开全文</summary>${bodyHtml}</details>`
+          : '')
+        : bodyHtml;
+
+      const article = document.createElement('article');
+      article.className = `item level-${lvClass}${animateEnter ? ' item-enter' : ''}`;
+      article.dataset.uid = item.uid;
+      const loading = state.analyzing.has(item.uid);
+      const done = Boolean(state.analysis[item.uid]);
+      const btnClass = loading ? 'ai-btn loading' : (done ? 'ai-btn done' : 'ai-btn');
+      const btnText = loading ? '分析中...' : (done ? '重新分析' : 'AI分析');
+      article.innerHTML = `
+        <div class="item-head">
+          <span class="item-time">${escapeHTML(item.time || '--:--:--')}</span>
+          <span class="item-tags">
+            <span class="source-badge ${sourceClass(item.source)}">${escapeHTML(sourceName(item.source, item.sourceName))}</span>
+            <span class="lv lv-${lvClass}">L${escapeHTML(lvText)}</span>
+          </span>
+        </div>
+        ${item.title ? `<div class="title-row">${highlight(item.title, state.keyword)}</div>` : ''}
+        ${contentHtml}
+        <div class="meta-row">
+          <div class="meta">
+            ${item.author ? `<span>来源：${escapeHTML(item.author)}</span>` : ''}
+            ${item.id ? `<span>ID：${escapeHTML(String(item.id))}</span>` : ''}
+            ${item.url ? `<span><a href="${escapeHTML(item.url)}" target="_blank" rel="noopener noreferrer">原文</a></span>` : ''}
+          </div>
+          <button class="${btnClass}" data-action="ai-analyze" data-uid="${escapeHTML(item.uid)}" ${loading ? 'disabled' : ''}>${btnText}</button>
+        </div>
+        <div data-ai-result>${renderAiPanel(state.analysis[item.uid])}</div>
+      `;
+      return article;
+    }
+
+    function scheduleClearEnterClass() {
+      if (state.enterTimer) clearTimeout(state.enterTimer);
+      state.enterTimer = setTimeout(() => {
+        const nodes = el.feed.querySelectorAll('article.item-enter');
+        for (const node of nodes) node.classList.remove('item-enter');
+      }, 500);
+    }
+
+    function render(animateUids = null) {
       const list = state.list.filter(it => passFilter(it));
       el.statTotal.textContent = String(state.list.length);
       el.statVisible.textContent = String(list.length);
 
       if (!list.length) {
-        el.feed.innerHTML = '<div class="empty">暂无数据，点击“立即刷新”或等待自动同步。</div>';
+        if (!el.feed.querySelector('.empty')) {
+          el.feed.innerHTML = '<div class="empty">暂无数据，点击“立即刷新”或等待自动同步。</div>';
+        }
         return;
       }
 
-      el.feed.innerHTML = list.map((item) => {
-        const lvClass = levelClass(item.level);
-        const lvText = levelText(item.level);
-        const hasTitle = Boolean(String(item.title || '').trim());
-        const hasBody = Boolean(String(item.text || '').trim());
-        const bodyHtml = hasBody ? `<div class="text">${highlight(item.text || '', state.keyword)}</div>` : '';
-        const expandedAttr = state.expanded.has(item.uid) ? ' open' : '';
-        const contentHtml = hasTitle
-          ? (hasBody
-            ? `<details class="expand-wrap" data-uid="${escapeHTML(item.uid)}"${expandedAttr}><summary>展开全文</summary>${bodyHtml}</details>`
-            : '')
-          : bodyHtml;
-        return `
-          <article class="item level-${lvClass}">
-            <div class="item-head">
-              <span>
-                <span class="source-badge ${sourceClass(item.source)}">${escapeHTML(sourceName(item.source, item.sourceName))}</span>
-                ${escapeHTML(item.time || '--:--:--')}
-                <span class="lv lv-${lvClass}">L${escapeHTML(lvText)}</span>
-              </span>
-            </div>
-            ${item.title ? `<div class="title-row">${highlight(item.title, state.keyword)}</div>` : ''}
-            ${contentHtml}
-            <div class="meta">
-              ${item.author ? `<span>来源：${escapeHTML(item.author)}</span>` : ''}
-              ${item.id ? `<span>ID：${escapeHTML(String(item.id))}</span>` : ''}
-              ${item.url ? `<span><a href="${escapeHTML(item.url)}" target="_blank" rel="noopener noreferrer">原文</a></span>` : ''}
-            </div>
-          </article>
-        `;
-      }).join('');
+      const animateSet = animateUids ? new Set(animateUids) : new Set();
+      const frag = document.createDocumentFragment();
+      for (const item of list) {
+        frag.appendChild(buildItemNode(item, animateSet.has(item.uid)));
+      }
+      el.feed.replaceChildren(frag);
+      if (animateSet.size > 0) scheduleClearEnterClass();
+    }
+
+    function prependNewItems(newUids) {
+      const uidSet = new Set(Array.isArray(newUids) ? newUids : []);
+      if (!uidSet.size) return false;
+
+      const list = state.list.filter(it => uidSet.has(it.uid) && passFilter(it));
+      if (!list.length) return false;
+
+      const empty = el.feed.querySelector('.empty');
+      if (empty) empty.remove();
+
+      const frag = document.createDocumentFragment();
+      for (const item of list) {
+        frag.appendChild(buildItemNode(item, true));
+      }
+      el.feed.prepend(frag);
+
+      const visibleCount = state.list.filter(it => passFilter(it)).length;
+      el.statTotal.textContent = String(state.list.length);
+      el.statVisible.textContent = String(visibleCount);
+
+      const nodes = el.feed.querySelectorAll('article.item[data-uid]');
+      for (let i = visibleCount; i < nodes.length; i += 1) {
+        nodes[i].remove();
+      }
+
+      scheduleClearEnterClass();
+      return true;
     }
 
     function formatSourcesInfo(sources) {
@@ -1002,7 +1390,8 @@
         }
 
         const items = Array.isArray(data.items) ? data.items : [];
-        const added = merge(items);
+        const mergeResult = merge(items);
+        const added = mergeResult.added;
         const sourceInfo = formatSourcesInfo(data.sources);
 
         el.updated.textContent = `最近更新 ${nowText()}`;
@@ -1016,7 +1405,12 @@
         setStatus('ok', state.auto ? '自动刷新中' : '已手动更新');
         state.lastError = '';
         if (added > 0) {
-          render();
+          const canIncrementalInsert =
+            state.keyword.trim() === '' &&
+            state.sourceFilter === 'all';
+          if (!canIncrementalInsert || !prependNewItems(mergeResult.newUids)) {
+            render(mergeResult.newUids);
+          }
         }
       } catch (err) {
         const msg = err && err.message ? err.message : 'unknown_error';
@@ -1061,6 +1455,8 @@
         state.list = [];
         state.seen.clear();
         state.expanded.clear();
+        state.analysis = Object.create(null);
+        state.analyzing.clear();
         save();
         render();
         showToast('已清空缓存');
@@ -1089,6 +1485,14 @@
         state.sourceFilter = selected === 'all' ? 'all' : normalizeSource(selected, 'all');
         save();
         render();
+      });
+
+      el.feed.addEventListener('click', (evt) => {
+        const btn = evt.target && evt.target.closest ? evt.target.closest('button[data-action="ai-analyze"]') : null;
+        if (!btn) return;
+        const uid = String(btn.dataset.uid || '').trim();
+        if (!uid) return;
+        requestAiAnalysis(uid);
       });
 
       el.feed.addEventListener('toggle', (evt) => {

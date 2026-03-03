@@ -134,6 +134,26 @@ node --check cls-telegraph-proxy.js
 curl -sS 'http://127.0.0.1:8066/api/telegraph?limit=50'
 ```
 
+## AI Analysis Config (DeepSeek)
+
+`/api/analyze` 默认按 DeepSeek OpenAI-compatible 接口调用：
+
+- 默认 `OPENAI_API_BASE=https://api.deepseek.com/v1`
+- 默认 `OPENAI_MODEL=deepseek-chat`
+
+最简配置只需要：
+
+```bash
+export OPENAI_API_KEY=你的DeepSeekKey
+```
+
+可选覆盖：
+
+```bash
+export OPENAI_API_BASE=https://api.deepseek.com/v1
+export OPENAI_MODEL=deepseek-chat
+```
+
 ## Disclaimer
 
 - 本项目仅用于技术学习与本地信息聚合演示

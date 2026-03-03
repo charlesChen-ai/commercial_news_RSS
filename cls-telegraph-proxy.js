@@ -23,11 +23,64 @@ const endpoints = {
   ths: 'https://www.10jqka.com.cn/',
 };
 
+const SOURCE_TASKS = [
+  { source: 'cls', sourceName: '财联社', fn: fetchClsItems },
+  { source: 'eastmoney', sourceName: '东方财富', fn: fetchEastmoneyItems },
+  { source: 'sina', sourceName: '新浪财经', fn: fetchSinaItems },
+  { source: 'wscn', sourceName: '华尔街见闻', fn: fetchWscnItems },
+  { source: 'ths', sourceName: '同花顺', fn: fetchThsItems },
+];
+
+const ALLOWED_SOURCE_SET = new Set(SOURCE_TASKS.map((x) => x.source));
+
+const AI_PROVIDER_PRESETS = {
+  deepseek: {
+    label: 'DeepSeek',
+    apiBase: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  },
+  openai: {
+    label: 'OpenAI',
+    apiBase: 'https://api.openai.com/v1',
+    model: 'gpt-4.1-mini',
+  },
+  gemini: {
+    label: 'Gemini (OpenAI Compatible)',
+    apiBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-2.0-flash',
+  },
+  custom: {
+    label: 'Custom (OpenAI Compatible)',
+    apiBase: '',
+    model: '',
+  },
+};
+
 const cache = {
+  key: '',
   ts: 0,
   payload: null,
   ttlMs: 3000,
 };
+
+const aiConfig = {
+  provider: process.env.AI_PROVIDER || process.env.LLM_PROVIDER || 'deepseek',
+  apiKey: process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '',
+  apiBase:
+    process.env.OPENAI_API_BASE ||
+    process.env.LLM_API_BASE ||
+    process.env.DEEPSEEK_API_BASE ||
+    'https://api.deepseek.com/v1',
+  model:
+    process.env.OPENAI_MODEL ||
+    process.env.LLM_MODEL ||
+    process.env.DEEPSEEK_MODEL ||
+    'deepseek-chat',
+  cacheTtlMs: Number(process.env.AI_CACHE_TTL_MS || 6 * 60 * 60 * 1000),
+  cacheMax: Number(process.env.AI_CACHE_MAX || 800),
+};
+
+const aiCache = new Map();
 
 function sendJson(res, code, data) {
   const body = JSON.stringify(data);
@@ -35,6 +88,8 @@ function sendJson(res, code, data) {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   });
   res.end(body);
 }
@@ -57,6 +112,61 @@ function parseLimit(searchParams) {
   const raw = Number(searchParams.get('limit') || 120);
   if (!Number.isFinite(raw)) return 120;
   return Math.max(20, Math.min(500, Math.floor(raw)));
+}
+
+function parseSources(searchParams) {
+  const raw = String(searchParams.get('sources') || '').trim().toLowerCase();
+  if (!raw) return SOURCE_TASKS.map((task) => task.source);
+
+  const out = [];
+  const seen = new Set();
+
+  for (const token of raw.split(',')) {
+    const key = String(token || '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    if (!ALLOWED_SOURCE_SET.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+
+  if (out.length === 0) throw new Error('invalid_sources');
+  return out;
+}
+
+function clampNumber(input, min, max) {
+  const n = Number(input);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+function readRequestBody(req, maxBytes = 512 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('payload_too_large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function readJsonBody(req) {
+  const raw = await readRequestBody(req);
+  if (!raw || !raw.trim()) return {};
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    throw new Error('invalid_json_body');
+  }
 }
 
 function stripTags(html) {
@@ -544,6 +654,278 @@ function dedupeByFuzzyContent(items, windowSec = 600, similarityThreshold = 0.88
   return kept;
 }
 
+function parseFirstJsonObject(text) {
+  const source = String(text || '').trim();
+  if (!source) throw new Error('ai_empty_response');
+
+  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const plain = fenced ? fenced[1].trim() : source;
+  if (plain.startsWith('{') && plain.endsWith('}')) {
+    return JSON.parse(plain);
+  }
+
+  const start = source.indexOf('{');
+  if (start < 0) throw new Error('ai_json_not_found');
+
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(source.slice(start, i + 1));
+    }
+  }
+  throw new Error('ai_json_unclosed');
+}
+
+function normalizeStringArray(arr, limit = 3) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  for (const x of arr) {
+    const s = String(x || '').trim();
+    if (!s) continue;
+    out.push(s.slice(0, 120));
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function splitTargetsByDirection(targets) {
+  const bullish = [];
+  const bearish = [];
+  for (const raw of Array.isArray(targets) ? targets : []) {
+    const text = String(raw || '').trim();
+    if (!text) continue;
+    if (/利好|看多|受益|上涨|走强|受益于|弹性/.test(text)) {
+      bullish.push(text);
+      continue;
+    }
+    if (/利空|看空|承压|下跌|走弱|受损|风险/.test(text)) {
+      bearish.push(text);
+    }
+  }
+  return {
+    bullish: normalizeStringArray(bullish, 4),
+    bearish: normalizeStringArray(bearish, 4),
+  };
+}
+
+function normalizeAiResult(raw) {
+  const sentimentRaw = String(raw && raw.sentiment ? raw.sentiment : '').trim().toLowerCase();
+  let sentiment = 'neutral';
+  if (['bullish', 'positive', '利好', '看多'].includes(sentimentRaw)) sentiment = 'bullish';
+  if (['bearish', 'negative', '利空', '看空'].includes(sentimentRaw)) sentiment = 'bearish';
+
+  const score = Math.round(clampNumber(raw && raw.score, -100, 100));
+  const confidence = Math.round(clampNumber(raw && raw.confidence, 0, 1) * 100) / 100;
+
+  const bullishTargets = normalizeStringArray(raw && raw.bullish_targets, 4);
+  const bearishTargets = normalizeStringArray(raw && raw.bearish_targets, 4);
+  const impactTargets = normalizeStringArray(raw && raw.impact_targets, 6);
+  const fallbackSplit = splitTargetsByDirection(impactTargets);
+
+  return {
+    sentiment,
+    score,
+    confidence,
+    horizon: String((raw && raw.horizon) || 'short_term').trim().slice(0, 24) || 'short_term',
+    summary: String((raw && raw.summary) || '').trim().slice(0, 240),
+    positive_factors: normalizeStringArray(raw && raw.positive_factors, 3),
+    negative_factors: normalizeStringArray(raw && raw.negative_factors, 3),
+    bullish_targets: bullishTargets.length ? bullishTargets : fallbackSplit.bullish,
+    bearish_targets: bearishTargets.length ? bearishTargets : fallbackSplit.bearish,
+    impact_targets: impactTargets,
+    model: aiConfig.model,
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeProviderName(input) {
+  const value = String(input || '').trim().toLowerCase();
+  if (!value) return 'deepseek';
+  if (AI_PROVIDER_PRESETS[value]) return value;
+  return 'custom';
+}
+
+function resolveAiRuntimeConfig(body) {
+  const aiBody = body && typeof body.ai === 'object' && body.ai ? body.ai : {};
+  const provider = normalizeProviderName(aiBody.provider || body.provider || aiConfig.provider);
+  const preset = AI_PROVIDER_PRESETS[provider] || AI_PROVIDER_PRESETS.custom;
+
+  const apiKey = String(aiBody.apiKey || body.apiKey || aiConfig.apiKey || '').trim();
+  const apiBase = String(aiBody.apiBase || body.apiBase || preset.apiBase || aiConfig.apiBase || '').trim();
+  const model = String(aiBody.model || body.model || preset.model || aiConfig.model || '').trim();
+
+  return {
+    provider,
+    apiKey,
+    apiBase,
+    model,
+  };
+}
+
+function listAiProviders() {
+  const providers = Object.entries(AI_PROVIDER_PRESETS).map(([id, meta]) => ({
+    id,
+    label: meta.label,
+    defaultApiBase: meta.apiBase,
+    defaultModel: meta.model,
+  }));
+
+  return {
+    providers,
+    defaults: {
+      provider: normalizeProviderName(aiConfig.provider),
+      apiBase: aiConfig.apiBase,
+      model: aiConfig.model,
+      hasApiKey: Boolean(aiConfig.apiKey),
+    },
+  };
+}
+
+function buildAiCacheKey(input, runtimeConfig) {
+  const uid = String((input && input.uid) || '').trim();
+  const providerPart = String((runtimeConfig && runtimeConfig.provider) || 'deepseek').trim();
+  const modelPart = String((runtimeConfig && runtimeConfig.model) || '').trim();
+  const basePart = String((runtimeConfig && runtimeConfig.apiBase) || '')
+    .trim()
+    .replace(/\/+$/, '');
+
+  if (uid) {
+    return `uid:${uid}|provider:${providerPart}|model:${modelPart}|base:${basePart}`;
+  }
+
+  const t = String((input && input.title) || '').trim().slice(0, 120);
+  const x = String((input && input.text) || '').trim().slice(0, 300);
+  return `content:${t}|${x}|provider:${providerPart}|model:${modelPart}|base:${basePart}`;
+}
+
+function getAiCached(key) {
+  const hit = aiCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > aiConfig.cacheTtlMs) {
+    aiCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function setAiCached(key, value) {
+  aiCache.set(key, { ts: Date.now(), value });
+  if (aiCache.size <= aiConfig.cacheMax) return;
+  const overflow = aiCache.size - aiConfig.cacheMax;
+  const keys = aiCache.keys();
+  for (let i = 0; i < overflow; i += 1) {
+    const k = keys.next();
+    if (k.done) break;
+    aiCache.delete(k.value);
+  }
+}
+
+async function analyzeTelegraphWithModel(input, runtimeConfig) {
+  if (!runtimeConfig || !runtimeConfig.apiKey) {
+    throw new Error('ai_not_configured_set_api_key');
+  }
+  if (!runtimeConfig.apiBase) {
+    throw new Error('ai_not_configured_set_api_base');
+  }
+  if (!runtimeConfig.model) {
+    throw new Error('ai_not_configured_set_model');
+  }
+
+  const title = String((input && input.title) || '').trim();
+  const text = String((input && input.text) || '').trim();
+  if (!title && !text) throw new Error('ai_empty_input');
+
+  const payload = {
+    model: runtimeConfig.model,
+    temperature: 0.15,
+    messages: [
+      {
+        role: 'system',
+        content:
+          '你是资深A股/港股/宏观快讯分析师。任务是“分析这条新闻对市场可能产生的影响”，并给出简要说明。' +
+          '请先识别新闻类型（宏观/行业/公司/地缘/商品/政策），再判断影响方向与影响路径（例如：供需变化、风险偏好、估值、盈利预期、资金面）。' +
+          '评分与结论时，优先考虑未来1~2个交易日的情绪冲击与资金流影响：短期交易性影响权重约70%，中期基本面影响权重约30%。' +
+          '若短期与中期信号冲突，优先按短期给出sentiment和score，并在summary里点明冲突来源。' +
+          '必须只输出JSON，不要输出任何额外文本。' +
+          'JSON字段: sentiment(bullish|bearish|neutral), score(-100~100), confidence(0~1), horizon(short_term|mid_term), summary, positive_factors(array), negative_factors(array), bullish_targets(array), bearish_targets(array), impact_targets(array)。' +
+          'summary要求: 1~2句、简洁、可读，说明“为什么偏利好/偏利空/中性”；长度尽量控制在80字以内。' +
+          'positive_factors/negative_factors各最多3条，每条一句短语。' +
+          'bullish_targets/bearish_targets要求给出具体方向：优先写板块或个股名称，能定位个股时可附股票代码（如“中海油服(601808)”）；每个数组0~4条。' +
+          'impact_targets可作为总览补充（0~6条），不要与bullish_targets/bearish_targets完全重复。' +
+          '当信息不足或新闻真假不明时，用neutral并降低confidence，score靠近0。',
+      },
+      {
+        role: 'user',
+        content: JSON.stringify(
+          {
+            task: '请分析这条快讯的潜在市场影响，并给出简要说明。',
+            source: input.source || '',
+            time: input.time || '',
+            title,
+            text,
+          },
+          null,
+          2
+        ),
+      },
+    ],
+  };
+
+  const apiBase = String(runtimeConfig.apiBase || '').replace(/\/+$/, '');
+  const resp = await fetch(`${apiBase}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${runtimeConfig.apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const rawText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`ai_http_${resp.status}:${rawText.slice(0, 200)}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (_) {
+    throw new Error('ai_non_json_response');
+  }
+
+  const content =
+    data &&
+    data.choices &&
+    data.choices[0] &&
+    data.choices[0].message &&
+    data.choices[0].message.content
+      ? data.choices[0].message.content
+      : '';
+
+  const parsed = parseFirstJsonObject(content);
+  const normalized = normalizeAiResult(parsed);
+  normalized.model = runtimeConfig.model;
+  normalized.provider = runtimeConfig.provider || 'custom';
+  return normalized;
+}
+
 async function fetchText(url, extraHeaders = {}) {
   const resp = await fetch(url, {
     method: 'GET',
@@ -866,9 +1248,15 @@ function summarizeSources(sourceResults) {
   });
 }
 
-async function fetchAggregated(limit) {
+async function fetchAggregated(limit, selectedSources) {
+  const normalizedSources = Array.isArray(selectedSources) && selectedSources.length
+    ? SOURCE_TASKS.map((task) => task.source).filter((s) => selectedSources.includes(s))
+    : SOURCE_TASKS.map((task) => task.source);
+  if (!normalizedSources.length) throw new Error('invalid_sources');
+
+  const cacheKey = `${normalizedSources.join(',')}|${limit}`;
   const now = Date.now();
-  if (cache.payload && now - cache.ts <= cache.ttlMs) {
+  if (cache.payload && cache.key === cacheKey && now - cache.ts <= cache.ttlMs) {
     return {
       ...cache.payload,
       cached: true,
@@ -877,13 +1265,8 @@ async function fetchAggregated(limit) {
 
   const perSourceLimit = Math.max(20, Math.min(180, Math.ceil(limit * 1.4)));
 
-  const sourceTasks = [
-    { source: 'cls', sourceName: '财联社', fn: fetchClsItems },
-    { source: 'eastmoney', sourceName: '东方财富', fn: fetchEastmoneyItems },
-    { source: 'sina', sourceName: '新浪财经', fn: fetchSinaItems },
-    { source: 'wscn', sourceName: '华尔街见闻', fn: fetchWscnItems },
-    { source: 'ths', sourceName: '同花顺', fn: fetchThsItems },
-  ];
+  const sourceSet = new Set(normalizedSources);
+  const sourceTasks = SOURCE_TASKS.filter((task) => sourceSet.has(task.source));
 
   const settled = await Promise.allSettled(sourceTasks.map((task) => task.fn(perSourceLimit)));
 
@@ -942,6 +1325,7 @@ async function fetchAggregated(limit) {
     fetchedAt: new Date().toISOString(),
     count: uniqueByFuzzy.length,
     items: uniqueByFuzzy.slice(0, limit),
+    selectedSources: normalizedSources,
     sources: summarizeSources(sourceResults),
     dedupe: {
       before: merged.length,
@@ -953,6 +1337,7 @@ async function fetchAggregated(limit) {
     cached: false,
   };
 
+  cache.key = cacheKey;
   cache.ts = now;
   cache.payload = payload;
 
@@ -963,6 +1348,12 @@ const server = http.createServer(async (req, res) => {
   try {
     const base = `http://${req.headers.host || `127.0.0.1:${PORT}`}`;
     const requestUrl = new URL(req.url || '/', base);
+    const method = String(req.method || 'GET').toUpperCase();
+
+    if (method === 'OPTIONS') {
+      sendJson(res, 200, { ok: true });
+      return;
+    }
 
     if (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html') {
       sendFile(res, INDEX_FILE, 'text/html; charset=utf-8');
@@ -978,10 +1369,45 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (requestUrl.pathname === '/api/telegraph') {
+    if (requestUrl.pathname === '/api/telegraph' && method === 'GET') {
       const limit = parseLimit(requestUrl.searchParams);
-      const data = await fetchAggregated(limit);
+      const selectedSources = parseSources(requestUrl.searchParams);
+      const data = await fetchAggregated(limit, selectedSources);
       sendJson(res, 200, data);
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/ai/providers' && method === 'GET') {
+      sendJson(res, 200, { ok: true, ...listAiProviders() });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/analyze' && method === 'POST') {
+      const body = await readJsonBody(req);
+      const input = {
+        uid: String((body && body.uid) || '').trim(),
+        source: String((body && body.source) || '').trim(),
+        time: String((body && body.time) || '').trim(),
+        title: String((body && body.title) || '').trim(),
+        text: String((body && body.text) || '').trim(),
+      };
+
+      if (!input.title && !input.text) {
+        sendJson(res, 400, { ok: false, error: 'missing_title_or_text' });
+        return;
+      }
+
+      const runtimeConfig = resolveAiRuntimeConfig(body);
+      const cacheKey = buildAiCacheKey(input, runtimeConfig);
+      const cached = getAiCached(cacheKey);
+      if (cached) {
+        sendJson(res, 200, { ok: true, cached: true, analysis: cached });
+        return;
+      }
+
+      const analysis = await analyzeTelegraphWithModel(input, runtimeConfig);
+      setAiCached(cacheKey, analysis);
+      sendJson(res, 200, { ok: true, cached: false, analysis });
       return;
     }
 
