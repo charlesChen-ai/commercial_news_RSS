@@ -93,11 +93,6 @@ struct TelegraphCardView: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
                 .lineSpacing(2)
-                .onTapGesture {
-                    if !workflow.isRead {
-                        onToggleRead()
-                    }
-                }
 
             if !cleanText.isEmpty {
                 Text(cleanText)
@@ -111,11 +106,6 @@ struct TelegraphCardView: View {
                 .foregroundStyle(.primary)
                 .lineSpacing(2)
                 .lineLimit(expandText ? nil : 5)
-                .onTapGesture {
-                    if !workflow.isRead {
-                        onToggleRead()
-                    }
-                }
         }
     }
 
