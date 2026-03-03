@@ -207,15 +207,13 @@ struct FeedView: View {
         let keywords = settings.keywordList
         if keywords.isEmpty { return [] }
 
-        let headlineUIDs = Set(headlineClusters.map(\.primary.uid))
         return viewModel.displayClusters.filter { cluster in
-            !headlineUIDs.contains(cluster.primary.uid) && !matchedKeywords(for: cluster, keywords: keywords).isEmpty
+            !matchedKeywords(for: cluster, keywords: keywords).isEmpty
         }
     }
 
     private var realtimeClusters: [TelegraphCluster] {
-        let headlineUIDs = Set(headlineClusters.map(\.primary.uid))
-        let base = viewModel.displayClusters.filter { !headlineUIDs.contains($0.primary.uid) }
+        let base = viewModel.displayClusters
         let keywordUIDs = Set(keywordHitClusters.map(\.primary.uid))
         let matched = base.filter { keywordUIDs.contains($0.primary.uid) }
         let others = base.filter { !keywordUIDs.contains($0.primary.uid) }
@@ -312,7 +310,7 @@ struct FeedView: View {
     private var realtimeSectionView: some View {
         sectionCard(
             title: "实时流",
-            subtitle: "按时间持续更新",
+            subtitle: "全等级快讯按时间持续更新",
             icon: "bolt.horizontal.fill",
             tint: .blue
         ) {
