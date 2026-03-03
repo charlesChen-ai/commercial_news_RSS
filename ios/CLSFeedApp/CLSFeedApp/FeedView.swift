@@ -57,7 +57,11 @@ struct FeedView: View {
                                                 .padding(.vertical, 4)
                                         } else {
                                             ForEach(headlineClusters) { cluster in
-                                                clusterCell(cluster, keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList))
+                                                clusterCell(
+                                                    cluster,
+                                                    keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList),
+                                                    allowEventDetail: false
+                                                )
                                             }
                                         }
                                     }
@@ -86,7 +90,11 @@ struct FeedView: View {
                                                 .padding(.vertical, 4)
                                         } else {
                                             ForEach(realtimeClusters) { cluster in
-                                                clusterCell(cluster, keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList))
+                                                clusterCell(
+                                                    cluster,
+                                                    keywordHits: matchedKeywords(for: cluster, keywords: settings.keywordList),
+                                                    allowEventDetail: true
+                                                )
                                             }
                                         }
                                     }
@@ -345,7 +353,7 @@ struct FeedView: View {
         .padding(.horizontal, 12)
     }
 
-    private func clusterCell(_ cluster: TelegraphCluster, keywordHits: [String]) -> some View {
+    private func clusterCell(_ cluster: TelegraphCluster, keywordHits: [String], allowEventDetail: Bool) -> some View {
         VStack(spacing: 8) {
             TelegraphCardView(
                 item: cluster.primary,
@@ -376,7 +384,7 @@ struct FeedView: View {
 
                 Spacer()
 
-                if cluster.isMerged {
+                if allowEventDetail, cluster.isMerged {
                     Button {
                         viewModel.markRead(uid: cluster.primary.uid)
                         selectedCluster = cluster
