@@ -35,7 +35,7 @@ struct FeedView: View {
                             )
 
                         LazyVStack(spacing: 14) {
-                            if let err = viewModel.lastError, !err.isEmpty {
+                            if let err = viewModel.feedError, !err.isEmpty {
                                 errorBanner(err)
                             }
 
@@ -166,7 +166,7 @@ struct FeedView: View {
                     Task { await viewModel.refresh(using: settings) }
                 }
             }
-            .onChange(of: viewModel.lastError) { value in
+            .onChange(of: viewModel.aiError) { value in
                 if let value, !value.isEmpty {
                     showErrorAlert = true
                 }
@@ -174,7 +174,7 @@ struct FeedView: View {
             .alert("AI 分析失败", isPresented: $showErrorAlert) {
                 Button("确定", role: .cancel) {}
             } message: {
-                Text(viewModel.lastError ?? "未知错误")
+                Text(viewModel.aiError ?? "未知错误")
             }
             .sheet(isPresented: $showRecapSheet) {
                 recapSheet

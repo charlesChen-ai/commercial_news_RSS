@@ -11,7 +11,8 @@ final class FeedViewModel: ObservableObject {
     @Published var items: [TelegraphItem] = []
     @Published var clusters: [TelegraphCluster] = []
     @Published var sourceHealth: [SourceHealth] = []
-    @Published var lastError: String?
+    @Published var feedError: String?
+    @Published var aiError: String?
     @Published var isLoading = false
     @Published var analyzingUIDs: Set<String> = []
     @Published var analysisByUID: [String: AIAnalysis] = [:]
@@ -119,7 +120,7 @@ final class FeedViewModel: ObservableObject {
             clusters = buildClusters(from: result.items)
             sourceHealth = result.sources ?? []
             persistLatestItems(result.items)
-            lastError = nil
+            feedError = nil
 
             if hasLoadedSnapshot {
                 let newItems = result.items.filter { !previousUIDs.contains($0.uid) }
@@ -130,11 +131,8 @@ final class FeedViewModel: ObservableObject {
 
             await preloadQuotes(for: Array(displayClusters.prefix(40)))
         } catch {
-            if !items.isEmpty {
-                lastError = "刷新失败，已保留上次内容：\(error.localizedDescription)"
-            } else {
-                lastError = error.localizedDescription
-            }
+            // Keep previous content and fail silently for refresh UX.
+            feedError = nil
         }
     }
 
@@ -189,7 +187,6 @@ final class FeedViewModel: ObservableObject {
                             limit: 120,
                             sources: fallback
                         )
-                        lastError = "部分信息源响应超时，已返回可用源数据。"
                         return partial
                     } catch {
                         throw secondError
@@ -223,15 +220,15 @@ final class FeedViewModel: ObservableObject {
 
         let ai = settings.aiSnapshot
         if ai.apiKey.isEmpty {
-            lastError = "请先在控制台输入 AI API Key"
+            aiError = "请先在控制台输入 AI API Key"
             return
         }
         if ai.apiBase.isEmpty {
-            lastError = "请先在控制台填写 AI API Base"
+            aiError = "请先在控制台填写 AI API Base"
             return
         }
         if ai.model.isEmpty {
-            lastError = "请先在控制台填写 AI Model"
+            aiError = "请先在控制台填写 AI Model"
             return
         }
 
@@ -242,9 +239,9 @@ final class FeedViewModel: ObservableObject {
             let analysis = try await APIClient.shared.analyze(baseURL: settings.serverBaseURL, item: item, ai: ai)
             analysisByUID[item.uid] = analysis
             persistAnalysisCache()
-            lastError = nil
+            aiError = nil
         } catch {
-            lastError = error.localizedDescription
+            aiError = error.localizedDescription
         }
     }
 
