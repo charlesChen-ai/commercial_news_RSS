@@ -505,21 +505,21 @@ final class FeedViewModel: ObservableObject {
     }
 
     private func clusterSignature(for item: TelegraphItem) -> String {
-        let t = normalizeForCluster(item.displayTitle)
-        if t.count >= 8 {
-            return "t:\(String(t.prefix(64)))"
+        let h = comparableHeadline(for: item)
+        if h.count >= 10 {
+            return "h:\(String(h.prefix(72)))"
         }
 
         let x = normalizeForCluster(item.text)
-        if x.count >= 16 {
-            return "x:\(String(x.prefix(36)))"
+        if x.count >= 18 {
+            return "x:\(String(x.prefix(44)))"
         }
 
         return "u:\(item.uid)"
     }
 
     private func isSameEvent(_ lhs: TelegraphItem, _ rhs: TelegraphItem, _ lhsSignature: String, _ rhsSignature: String) -> Bool {
-        if lhs.ctime > 0, rhs.ctime > 0, abs(lhs.ctime - rhs.ctime) > 45 * 60 {
+        if lhs.ctime > 0, rhs.ctime > 0, abs(lhs.ctime - rhs.ctime) > 2 * 60 * 60 {
             return false
         }
 
@@ -527,25 +527,55 @@ final class FeedViewModel: ObservableObject {
             return true
         }
 
-        let lt = normalizeForCluster(lhs.displayTitle)
-        let rt = normalizeForCluster(rhs.displayTitle)
-        if lt.count >= 8, lt == rt {
+        let lh = comparableHeadline(for: lhs)
+        let rh = comparableHeadline(for: rhs)
+        if lh.count >= 10, rh.count >= 10, lh == rh {
             return true
         }
 
         let lx = normalizeForCluster(lhs.text)
         let rx = normalizeForCluster(rhs.text)
-        if lx.count >= 24, rx.count >= 24, String(lx.prefix(28)) == String(rx.prefix(28)) {
+        if lx.count >= 24, rx.count >= 24, String(lx.prefix(32)) == String(rx.prefix(32)) {
+            return true
+        }
+
+        if lh.count >= 12, rh.count >= 12 {
+            let lp = String(lh.prefix(22))
+            let rp = String(rh.prefix(22))
+            if lp.count >= 12, rp.count >= 12, (lp == rp || lh.hasPrefix(rp) || rh.hasPrefix(lp)) {
+                return true
+            }
+        }
+
+        if lh.count >= 12, rx.count >= 20, rx.hasPrefix(String(lh.prefix(20))) {
+            return true
+        }
+        if rh.count >= 12, lx.count >= 20, lx.hasPrefix(String(rh.prefix(20))) {
             return true
         }
 
         return false
     }
 
+    private func comparableHeadline(for item: TelegraphItem) -> String {
+        let t = normalizeForCluster(item.displayTitle)
+        if t.count >= 10 {
+            return t
+        }
+        let x = normalizeForCluster(item.text)
+        if x.count >= 24 {
+            return String(x.prefix(32))
+        }
+        return x
+    }
+
     private func normalizeForCluster(_ text: String) -> String {
         text
             .lowercased()
             .replacingOccurrences(of: "https?://\\S+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "^【[^】]{2,30}】", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "^(财联社|新浪财经|华尔街见闻|同花顺|东方财富)(\\d{1,2}月\\d{1,2}日)?电[，,:：\\s]*", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "^[\\p{Han}a-z0-9%]{0,16}电[，,:：\\s]*", with: "", options: .regularExpression)
             .replacingOccurrences(of: "[^\\p{Han}a-z0-9%]+", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
