@@ -97,7 +97,6 @@ enum FeedFilterOption: String, CaseIterable, Identifiable, Codable {
     case unread
     case starred
     case later
-    case important
 
     var id: String { rawValue }
 
@@ -111,8 +110,6 @@ enum FeedFilterOption: String, CaseIterable, Identifiable, Codable {
             return "收藏"
         case .later:
             return "稍后看"
-        case .important:
-            return "重要"
         }
     }
 }

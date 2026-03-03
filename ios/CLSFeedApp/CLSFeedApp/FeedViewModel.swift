@@ -74,8 +74,6 @@ final class FeedViewModel: ObservableObject {
                 return starredUIDs.contains(uid)
             case .later:
                 return laterUIDs.contains(uid)
-            case .important:
-                return ["A", "B"].contains(cluster.primary.level.uppercased())
             }
         }
 
