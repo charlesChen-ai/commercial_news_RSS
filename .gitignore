@@ -29,6 +29,7 @@ temp/
 # Environment/local secrets
 .env
 .env.*
+.codex/
 
 # Xcode user data and derived files
 DerivedData/
