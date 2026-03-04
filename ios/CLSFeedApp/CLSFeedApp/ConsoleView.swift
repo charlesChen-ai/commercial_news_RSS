@@ -52,6 +52,7 @@ struct ConsoleView: View {
     @State private var lastLoadedAt = Date.distantPast
     @State private var selectedSection: ConsoleSection = .overview
     @State private var telemetrySummary: AppTelemetrySummary = .empty
+    @State private var todayNoiseStats: FeedNoiseReductionStats = .empty
     @FocusState private var keywordFieldFocused: Bool
 
     init(isActive: Bool = true) {
@@ -84,7 +85,10 @@ struct ConsoleView: View {
             .task(id: isActive) {
                 guard isActive else { return }
                 let shouldReload = !didInitialLoad || Date().timeIntervalSince(lastLoadedAt) > 12
-                guard shouldReload else { return }
+                guard shouldReload else {
+                    refreshFeedNoiseStats()
+                    return
+                }
                 didInitialLoad = true
                 await reloadConsoleData()
             }
@@ -142,6 +146,15 @@ struct ConsoleView: View {
                 syncDeviceRegistrationIfNeeded()
                 guard isActive else { return }
                 Task { await refreshSourceHealth() }
+            }
+            .onChange(of: settings.feedCollapseThreshold) { _ in
+                refreshFeedNoiseStats()
+            }
+            .onChange(of: settings.feedSourcePriorityByCode) { _ in
+                refreshFeedNoiseStats()
+            }
+            .onChange(of: settings.feedUncollapseUIDUntilByUID) { _ in
+                refreshFeedNoiseStats()
             }
             .onChange(of: settings.aiRetryQueueEnabled) { _ in
                 refreshPendingJobs()
@@ -670,6 +683,37 @@ struct ConsoleView: View {
 
     private var feedQualityCard: some View {
         settingsCard(title: "消息质量控制") {
+            Text("折叠策略预设")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("折叠策略", selection: qualityPresetBinding) {
+                ForEach(FeedQualityPreset.allCases) { preset in
+                    Text(preset.title).tag(preset)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            HStack {
+                Text("今日噪音下降")
+                Spacer()
+                if todayNoiseStats.rawCount > 0 {
+                    Text("\(todayNoiseStats.reducedCount) / \(todayNoiseStats.rawCount)（\(Int((todayNoiseStats.reductionRate * 100).rounded()))%）")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(todayNoiseStats.reducedCount > 0 ? .green : .secondary)
+                } else {
+                    Text("--")
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if todayNoiseStats.rawCount > 0 {
+                Text("按当前策略估算：样本 \(todayNoiseStats.rawCount) 条，折叠后 \(todayNoiseStats.clusteredCount) 条。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Text("重复快讯折叠阈值")
                 Spacer()
@@ -709,10 +753,26 @@ struct ConsoleView: View {
                 }
             }
 
+            HStack {
+                Text("临时不折叠条目")
+                Spacer()
+                Text("\(settings.feedUncollapseUIDUntilByUID.count)")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                if !settings.feedUncollapseUIDUntilByUID.isEmpty {
+                    Button("清空") {
+                        settings.resetUncollapseUIDs()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
             HStack(spacing: 10) {
                 Button("恢复默认") {
                     settings.feedCollapseThreshold = Double(FeedQualitySnapshot.default.collapseThreshold)
                     settings.resetSourcePriorityWeights()
+                    settings.resetUncollapseUIDs()
                 }
                 .buttonStyle(.bordered)
 
@@ -975,6 +1035,21 @@ struct ConsoleView: View {
         return .secondary
     }
 
+    private var qualityPresetBinding: Binding<FeedQualityPreset> {
+        Binding(
+            get: {
+                let threshold = Int(settings.feedCollapseThreshold.rounded())
+                if threshold <= 65 { return .highDedupe }
+                if threshold >= 82 { return .keepOriginal }
+                return .balanced
+            },
+            set: { preset in
+                settings.feedCollapseThreshold = Double(preset.threshold)
+                refreshFeedNoiseStats()
+            }
+        )
+    }
+
     private var collapseThresholdHintText: String {
         let value = Int(settings.feedCollapseThreshold.rounded())
         if value <= 64 {
@@ -1113,6 +1188,7 @@ struct ConsoleView: View {
         refreshAPNsTokenDisplay()
         refreshPendingJobs()
         refreshBackgroundDiagnostics()
+        refreshFeedNoiseStats()
         telemetrySummary = AppTelemetryCenter.shared.summary()
         lastLoadedAt = Date()
     }
@@ -1156,6 +1232,35 @@ struct ConsoleView: View {
 
     private func refreshPendingJobs() {
         pendingJobsCount = AIRetryQueueStore.shared.pendingCount
+    }
+
+    private func refreshFeedNoiseStats() {
+        let snapshot = FeedPersistenceStore(scope: "home").loadState().latestItems
+        guard !snapshot.isEmpty else {
+            todayNoiseStats = .empty
+            return
+        }
+
+        let calendar = Calendar.current
+        let now = Date()
+        let todayItems = snapshot.filter { item in
+            guard item.ctime > 0 else { return false }
+            let itemDate = Date(timeIntervalSince1970: TimeInterval(item.ctime))
+            return calendar.isDate(itemDate, inSameDayAs: now)
+        }
+        let sample = todayItems.isEmpty ? Array(snapshot.prefix(120)) : todayItems
+        guard !sample.isEmpty else {
+            todayNoiseStats = .empty
+            return
+        }
+
+        let clustered = TelegraphClusterer.buildClusters(from: sample, quality: settings.feedQualitySnapshot).count
+        let rawCount = sample.count
+        todayNoiseStats = FeedNoiseReductionStats(
+            rawCount: rawCount,
+            clusteredCount: clustered,
+            reducedCount: max(0, rawCount - clustered)
+        )
     }
 
     #if os(iOS)

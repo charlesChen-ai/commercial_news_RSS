@@ -81,6 +81,10 @@ struct FavoritesView: View {
                                         _ = settings.addKeywordSubscription(keywordSuggestion)
                                         AppHaptics.impact()
                                     },
+                                    onUncollapse24h: cluster.isMerged ? {
+                                        settings.setUncollapse(uid: cluster.primary.uid, duration: 24 * 3600)
+                                        AppHaptics.impact()
+                                    } : nil,
                                     keywordSuggestion: keywordSuggestion,
                                     inlineActions: [],
                                     onAnalyze: {
@@ -170,6 +174,9 @@ struct FavoritesView: View {
                 Task { await viewModel.applyQualitySettings(using: settings) }
             }
             .onChange(of: settings.feedSourcePriorityByCode) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
+            }
+            .onChange(of: settings.feedUncollapseUIDUntilByUID) { _ in
                 Task { await viewModel.applyQualitySettings(using: settings) }
             }
             .onChange(of: viewModel.aiError) { value in

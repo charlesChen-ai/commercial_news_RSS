@@ -576,6 +576,10 @@ struct FeedView: View {
                     _ = settings.addKeywordSubscription(keywordSuggestion)
                     AppHaptics.impact()
                 },
+                onUncollapse24h: cluster.isMerged ? {
+                    settings.setUncollapse(uid: cluster.primary.uid, duration: 24 * 3600)
+                    AppHaptics.impact()
+                } : nil,
                 keywordSuggestion: keywordSuggestion,
                 inlineActions: inlineActions,
                 onAnalyze: {
@@ -605,9 +609,27 @@ struct FeedView: View {
             }
 
             if expandedClusterIDs.contains(cluster.id), !cluster.variants.isEmpty {
+                let visibleCount = variantVisibleCountByClusterID[cluster.id] ?? min(3, cluster.variants.count)
+                let shown = Array(cluster.variants.prefix(visibleCount))
                 VStack(spacing: 6) {
-                    ForEach(cluster.variants) { item in
+                    ForEach(shown) { item in
                         variantRow(item)
+                    }
+                    if visibleCount < cluster.variants.count {
+                        Button {
+                            let next = min(cluster.variants.count, visibleCount + 5)
+                            variantVisibleCountByClusterID[cluster.id] = next
+                            AppHaptics.selection()
+                        } label: {
+                            Text("查看更多 \(cluster.variants.count - visibleCount) 条")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(TwitterTheme.accent)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(TwitterTheme.accent.opacity(0.11), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(10)
@@ -632,17 +654,31 @@ struct FeedView: View {
     }
 
     private func clusterFooter(_ cluster: TelegraphCluster) -> some View {
-        HStack(spacing: 8) {
-            Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
 
-            Text(cluster.sourceNames.joined(separator: " / "))
-                .font(.caption)
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
+                Text(cluster.sourceNames.joined(separator: " / "))
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
+
+            if let reason = cluster.mergeReason, !reason.isEmpty, cluster.mergeScore > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("折叠依据：\(reason)（\(cluster.mergeScore)）")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
         }
         .padding(.vertical, 1)
         .padding(.horizontal, 4)
@@ -677,8 +713,11 @@ struct FeedView: View {
                 withAnimation(.easeInOut(duration: 0.16)) {
                     if expandedClusterIDs.contains(cluster.id) {
                         expandedClusterIDs.remove(cluster.id)
+                        variantVisibleCountByClusterID.removeValue(forKey: cluster.id)
                     } else {
                         expandedClusterIDs.insert(cluster.id)
+                        let current = variantVisibleCountByClusterID[cluster.id] ?? 0
+                        variantVisibleCountByClusterID[cluster.id] = max(current, min(3, cluster.variants.count))
                     }
                 }
                 AppHaptics.selection()
@@ -848,6 +887,22 @@ struct FeedView: View {
     private func sectionIDsSignature(_ section: FeedTopSection) -> String {
         let ids = sectionClusters(section).prefix(80).map(\.id).joined(separator: "|")
         return "\(section.rawValue)|\(ids)"
+    }
+
+    private func pruneClusterTransientState() {
+        let byID = Dictionary(uniqueKeysWithValues: viewModel.displayClusters.map { ($0.id, $0) })
+        let liveIDs = Set(byID.keys)
+        expandedClusterIDs = expandedClusterIDs.intersection(liveIDs)
+
+        var nextVisible: [String: Int] = [:]
+        nextVisible.reserveCapacity(variantVisibleCountByClusterID.count)
+        for (clusterID, count) in variantVisibleCountByClusterID {
+            guard let cluster = byID[clusterID] else { continue }
+            let maxCount = cluster.variants.count
+            guard maxCount > 0 else { continue }
+            nextVisible[clusterID] = min(maxCount, max(1, count))
+        }
+        variantVisibleCountByClusterID = nextVisible
     }
 
     private func sectionTopAnchorID(_ section: FeedTopSection) -> String {

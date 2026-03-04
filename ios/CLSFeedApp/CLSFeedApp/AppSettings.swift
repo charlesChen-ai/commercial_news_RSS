@@ -325,7 +325,7 @@ final class AppSettings: ObservableObject {
             feedUncollapseUIDUntilByUID,
             now: Date().timeIntervalSince1970
         )
-        FeedQualitySnapshot(
+        return FeedQualitySnapshot(
             collapseThreshold: Int(max(55, min(90, feedCollapseThreshold.rounded()))),
             sourcePriorityByCode: Self.prunedSourcePriorityMap(feedSourcePriorityByCode),
             uncollapseUIDs: Set(sanitized.keys)
@@ -442,6 +442,10 @@ final class AppSettings: ObservableObject {
         var next = feedUncollapseUIDUntilByUID
         next.removeValue(forKey: normalized)
         feedUncollapseUIDUntilByUID = Self.prunedFeedUncollapseMap(next, now: Date().timeIntervalSince1970)
+    }
+
+    func resetUncollapseUIDs() {
+        feedUncollapseUIDUntilByUID = [:]
     }
 
     func isSourceTemporarilyMuted(_ source: NewsSource, now: Date = Date()) -> Bool {

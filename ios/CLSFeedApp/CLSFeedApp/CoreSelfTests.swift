@@ -102,20 +102,29 @@ enum CoreSelfTests {
             url: ""
         )
 
-        let conservative = FeedQualitySnapshot(collapseThreshold: 86, sourcePriorityByCode: [:])
-        let aggressive = FeedQualitySnapshot(collapseThreshold: 66, sourcePriorityByCode: [:])
+        let conservative = FeedQualitySnapshot(collapseThreshold: 86, sourcePriorityByCode: [:], uncollapseUIDs: [])
+        let aggressive = FeedQualitySnapshot(collapseThreshold: 66, sourcePriorityByCode: [:], uncollapseUIDs: [])
         let conservativeClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: conservative)
         let aggressiveClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: aggressive)
         assert(conservativeClusters.count >= aggressiveClusters.count, "SelfTest: threshold collapse regression")
 
         let prioritized = FeedQualitySnapshot(
             collapseThreshold: 70,
-            sourcePriorityByCode: [NewsSource.sina.rawValue: 3]
+            sourcePriorityByCode: [NewsSource.sina.rawValue: 3],
+            uncollapseUIDs: []
         )
         let prioritizedClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: prioritized)
         if let first = prioritizedClusters.first {
             assert(first.primary.source == NewsSource.sina.rawValue, "SelfTest: source priority not applied")
         }
+
+        let uncollapsed = FeedQualitySnapshot(
+            collapseThreshold: 66,
+            sourcePriorityByCode: [:],
+            uncollapseUIDs: [lhs.uid]
+        )
+        let uncollapsedClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: uncollapsed)
+        assert(uncollapsedClusters.count >= 2, "SelfTest: temporary uncollapse should split cluster")
     }
 
     @MainActor

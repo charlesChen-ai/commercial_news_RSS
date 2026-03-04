@@ -34,11 +34,13 @@ struct TelegraphCardView: View {
     let onMuteSource24h: (() -> Void)?
     let onMuteSource7d: (() -> Void)?
     let onAddKeyword: (() -> Void)?
+    let onUncollapse24h: (() -> Void)?
     let keywordSuggestion: String?
     let inlineActions: [TelegraphInlineAction]
     let onAnalyze: () -> Void
 
     @State private var expandText = false
+    @State private var showAnalysisPanel = false
     private static var highlightCache: [String: AttributedString] = [:]
     private static let highlightCacheQueue = DispatchQueue(label: "cls.telegraph.highlight.cache")
     private static let highlightCacheLimit = 3200
@@ -92,7 +94,7 @@ struct TelegraphCardView: View {
             actionRow
 
             if let analysis {
-                analysisPanel(analysis)
+                analysisSection(analysis)
             }
         }
         .padding(.horizontal, 14)
@@ -131,6 +133,14 @@ struct TelegraphCardView: View {
                     }
                 }
             }
+            if let onUncollapse24h {
+                Button("本条 24 小时不折叠", systemImage: "rectangle.expand.vertical") {
+                    onUncollapse24h()
+                }
+            }
+        }
+        .onChange(of: analysis?.analyzedAt ?? "") { _ in
+            showAnalysisPanel = false
         }
     }
 
@@ -265,6 +275,54 @@ struct TelegraphCardView: View {
             .buttonStyle(.plain)
             .disabled(isAnalyzing)
             .opacity(isAnalyzing ? 0.78 : 1)
+        }
+    }
+
+    @ViewBuilder
+    private func analysisSection(_ analysis: AIAnalysis) -> some View {
+        if showAnalysisPanel {
+            VStack(spacing: 8) {
+                analysisPanel(analysis)
+                Button {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        showAnalysisPanel = false
+                    }
+                } label: {
+                    Label("收起分析", systemImage: "chevron.up")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        } else {
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    showAnalysisPanel = true
+                }
+                AppHaptics.selection()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TwitterTheme.accent)
+                    Text("查看 AI 分析")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(analysis.sentimentText) \(analysis.score)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(TwitterTheme.subtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
         }
     }
 

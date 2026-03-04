@@ -34,6 +34,7 @@ struct EventDetailView: View {
                     onMuteSource24h: nil,
                     onMuteSource7d: nil,
                     onAddKeyword: nil,
+                    onUncollapse24h: nil,
                     keywordSuggestion: nil,
                     inlineActions: [],
                     onAnalyze: { Task { await viewModel.analyze(item: cluster.primary, settings: settings) } }

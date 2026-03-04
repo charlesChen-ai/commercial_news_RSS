@@ -94,9 +94,9 @@ final class FeedViewModel: ObservableObject {
         label: "cls.feed.processing",
         qos: .userInitiated
     )
-    private static let canonicalTextCacheQueue = DispatchQueue(label: "cls.feed.canonical.cache")
-    private static var canonicalTextCache: [String: String] = [:]
-    private static let canonicalTextCacheLimit = 3000
+    nonisolated(unsafe) private static let canonicalTextCacheQueue = DispatchQueue(label: "cls.feed.canonical.cache")
+    nonisolated(unsafe) private static var canonicalTextCache: [String: String] = [:]
+    nonisolated(unsafe) private static let canonicalTextCacheLimit = 3000
 
     init(scope: String = "home", persistence: FeedPersistenceStore? = nil, retryQueue: AIRetryQueueStore = .shared) {
         self.scope = scope
@@ -134,6 +134,7 @@ final class FeedViewModel: ObservableObject {
                 sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
             )
             hasLoadedSnapshot = true
+            scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
         }
         if latestCursor == nil, !state.latestItems.isEmpty, let first = seedItems.first {
             latestCursor = TelegraphCursor.encode(ctime: first.ctime, uid: first.uid)
@@ -1152,7 +1153,12 @@ final class FeedViewModel: ObservableObject {
             return lhs.uid > rhs.uid
         }
         let id = sorted.first?.uid ?? cluster.id
-        return TelegraphCluster(id: id, items: sorted)
+        return TelegraphCluster(
+            id: id,
+            items: sorted,
+            mergeReason: cluster.mergeReason,
+            mergeScore: cluster.mergeScore
+        )
     }
 
     private nonisolated static func isRenderableCluster(_ cluster: TelegraphCluster) -> Bool {
