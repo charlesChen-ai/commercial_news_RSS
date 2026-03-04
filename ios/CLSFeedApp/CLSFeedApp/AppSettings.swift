@@ -97,6 +97,9 @@ final class AppSettings: ObservableObject {
         static let pushRateLimitPerHour = "app.push.rateLimitPerHour"
         static let pushSources = "app.push.sources"
         static let sourceMuteUntilByCode = "app.sources.muteUntilByCode"
+        static let feedCollapseThreshold = "app.feed.quality.collapseThreshold"
+        static let feedSourcePriorityByCode = "app.feed.quality.sourcePriorityByCode"
+        static let feedUncollapseUIDUntilByUID = "app.feed.quality.uncollapseUIDUntilByUID"
     }
 
     @Published var serverBaseURL: String {
@@ -183,6 +186,18 @@ final class AppSettings: ObservableObject {
         didSet { persistSourceMutes() }
     }
 
+    @Published var feedCollapseThreshold: Double {
+        didSet { UserDefaults.standard.set(feedCollapseThreshold, forKey: Keys.feedCollapseThreshold) }
+    }
+
+    @Published private(set) var feedSourcePriorityByCode: [String: Int] {
+        didSet { persistFeedSourcePriorities() }
+    }
+
+    @Published private(set) var feedUncollapseUIDUntilByUID: [String: Double] {
+        didSet { persistFeedUncollapseUIDs() }
+    }
+
     init() {
         let defaults = UserDefaults.standard
 
@@ -218,6 +233,12 @@ final class AppSettings: ObservableObject {
         let savedPushSources = defaults.string(forKey: Keys.pushSources) ?? ""
         let parsedPushSources = Set(savedPushSources.split(separator: ",").map { String($0) }).intersection(Set(NewsSource.allCases.map(\.rawValue)))
         let loadedMuteMap = Self.prunedSourceMuteMap(Self.loadSourceMutes(defaults: defaults), now: Date().timeIntervalSince1970)
+        let feedCollapseThreshold = defaults.object(forKey: Keys.feedCollapseThreshold) as? Double ?? Double(FeedQualitySnapshot.default.collapseThreshold)
+        let feedSourcePriorityByCode = Self.prunedSourcePriorityMap(Self.loadSourcePriorities(defaults: defaults))
+        let feedUncollapseUIDUntilByUID = Self.prunedFeedUncollapseMap(
+            Self.loadFeedUncollapseMap(defaults: defaults),
+            now: Date().timeIntervalSince1970
+        )
         let hasExistingSetup =
             defaults.object(forKey: Keys.serverBaseURL) != nil ||
             defaults.object(forKey: Keys.aiProvider) != nil ||
@@ -247,6 +268,9 @@ final class AppSettings: ObservableObject {
         self.pushRateLimitPerHour = max(1, min(30, pushRateLimitPerHour))
         self.pushSourceCodes = parsedPushSources.isEmpty ? Set(NewsSource.allCases.map(\.rawValue)) : parsedPushSources
         self.sourceMuteUntilByCode = loadedMuteMap
+        self.feedCollapseThreshold = max(55, min(90, feedCollapseThreshold))
+        self.feedSourcePriorityByCode = feedSourcePriorityByCode
+        self.feedUncollapseUIDUntilByUID = feedUncollapseUIDUntilByUID
     }
 
     var selectedSources: [NewsSource] {
@@ -293,6 +317,18 @@ final class AppSettings: ObservableObject {
             doNotDisturbEnd: normalizeClockText(pushDoNotDisturbEnd, fallback: "07:30"),
             rateLimitPerHour: Int(max(1, min(30, pushRateLimitPerHour.rounded()))),
             sourceCodes: Array(pushSourceCodes).sorted()
+        )
+    }
+
+    var feedQualitySnapshot: FeedQualitySnapshot {
+        let sanitized = Self.prunedFeedUncollapseMap(
+            feedUncollapseUIDUntilByUID,
+            now: Date().timeIntervalSince1970
+        )
+        FeedQualitySnapshot(
+            collapseThreshold: Int(max(55, min(90, feedCollapseThreshold.rounded()))),
+            sourcePriorityByCode: Self.prunedSourcePriorityMap(feedSourcePriorityByCode),
+            uncollapseUIDs: Set(sanitized.keys)
         )
     }
 
@@ -359,6 +395,53 @@ final class AppSettings: ObservableObject {
         let next = Set(sources.map(\.rawValue))
         if next.isEmpty { return }
         selectedSourceCodes = next
+    }
+
+    func sourcePriorityWeight(_ source: NewsSource) -> Int {
+        feedQualitySnapshot.priority(for: source.rawValue)
+    }
+
+    func setSourcePriority(_ source: NewsSource, weight: Int) {
+        let clamped = max(-3, min(3, weight))
+        var next = feedSourcePriorityByCode
+        if clamped == 0 {
+            next.removeValue(forKey: source.rawValue)
+        } else {
+            next[source.rawValue] = clamped
+        }
+        feedSourcePriorityByCode = Self.prunedSourcePriorityMap(next)
+    }
+
+    func resetSourcePriorityWeights() {
+        feedSourcePriorityByCode = [:]
+    }
+
+    func isUncollapseEnabled(uid: String, now: Date = Date()) -> Bool {
+        let normalized = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let ts = feedUncollapseUIDUntilByUID[normalized] ?? 0
+        return ts > now.timeIntervalSince1970
+    }
+
+    func setUncollapse(uid: String, duration: TimeInterval = 24 * 3600) {
+        let normalized = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        guard duration > 0 else { return }
+
+        let now = Date().timeIntervalSince1970
+        let deadline = now + duration
+        var next = Self.prunedFeedUncollapseMap(feedUncollapseUIDUntilByUID, now: now)
+        next[normalized] = max(next[normalized] ?? 0, deadline)
+        feedUncollapseUIDUntilByUID = next
+    }
+
+    func clearUncollapse(uid: String) {
+        let normalized = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        guard feedUncollapseUIDUntilByUID[normalized] != nil else { return }
+        var next = feedUncollapseUIDUntilByUID
+        next.removeValue(forKey: normalized)
+        feedUncollapseUIDUntilByUID = Self.prunedFeedUncollapseMap(next, now: Date().timeIntervalSince1970)
     }
 
     func isSourceTemporarilyMuted(_ source: NewsSource, now: Date = Date()) -> Bool {
@@ -555,6 +638,18 @@ final class AppSettings: ObservableObject {
         )
     }
 
+    nonisolated static func feedQualitySnapshot(defaults: UserDefaults = .standard) -> FeedQualitySnapshot {
+        let thresholdRaw = defaults.object(forKey: Keys.feedCollapseThreshold) as? Double ?? Double(FeedQualitySnapshot.default.collapseThreshold)
+        let threshold = Int(max(55, min(90, thresholdRaw.rounded())))
+        let priorities = prunedSourcePriorityMap(loadSourcePriorities(defaults: defaults))
+        let uncollapse = prunedFeedUncollapseMap(loadFeedUncollapseMap(defaults: defaults), now: Date().timeIntervalSince1970)
+        return FeedQualitySnapshot(
+            collapseThreshold: threshold,
+            sourcePriorityByCode: priorities,
+            uncollapseUIDs: Set(uncollapse.keys)
+        )
+    }
+
     private func persistKeywordSubscriptions() {
         if let data = try? JSONEncoder().encode(keywordSubscriptions) {
             UserDefaults.standard.set(data, forKey: Keys.keywordSubscriptions)
@@ -569,6 +664,31 @@ final class AppSettings: ObservableObject {
         }
         if let data = try? JSONEncoder().encode(sanitized) {
             UserDefaults.standard.set(data, forKey: Keys.sourceMuteUntilByCode)
+        }
+    }
+
+    private func persistFeedSourcePriorities() {
+        let sanitized = Self.prunedSourcePriorityMap(feedSourcePriorityByCode)
+        if sanitized != feedSourcePriorityByCode {
+            feedSourcePriorityByCode = sanitized
+            return
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
+            UserDefaults.standard.set(data, forKey: Keys.feedSourcePriorityByCode)
+        }
+    }
+
+    private func persistFeedUncollapseUIDs() {
+        let sanitized = Self.prunedFeedUncollapseMap(
+            feedUncollapseUIDUntilByUID,
+            now: Date().timeIntervalSince1970
+        )
+        if sanitized != feedUncollapseUIDUntilByUID {
+            feedUncollapseUIDUntilByUID = sanitized
+            return
+        }
+        if let data = try? JSONEncoder().encode(sanitized) {
+            UserDefaults.standard.set(data, forKey: Keys.feedUncollapseUIDUntilByUID)
         }
     }
 
@@ -624,6 +744,22 @@ final class AppSettings: ObservableObject {
         return decoded
     }
 
+    private nonisolated static func loadSourcePriorities(defaults: UserDefaults) -> [String: Int] {
+        guard let data = defaults.data(forKey: Keys.feedSourcePriorityByCode),
+              let decoded = try? JSONDecoder().decode([String: Int].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    private nonisolated static func loadFeedUncollapseMap(defaults: UserDefaults) -> [String: Double] {
+        guard let data = defaults.data(forKey: Keys.feedUncollapseUIDUntilByUID),
+              let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
     private nonisolated static func prunedSourceMuteMap(_ raw: [String: Double], now: Double) -> [String: Double] {
         let allowed = Set(NewsSource.allCases.map(\.rawValue))
         var out: [String: Double] = [:]
@@ -632,6 +768,31 @@ final class AppSettings: ObservableObject {
             if until <= now { continue }
             if !allowed.contains(code) { continue }
             out[code] = until
+        }
+        return out
+    }
+
+    private nonisolated static func prunedSourcePriorityMap(_ raw: [String: Int]) -> [String: Int] {
+        let allowed = Set(NewsSource.allCases.map(\.rawValue))
+        var out: [String: Int] = [:]
+        out.reserveCapacity(raw.count)
+        for (code, value) in raw {
+            guard allowed.contains(code) else { continue }
+            let clamped = max(-3, min(3, value))
+            if clamped == 0 { continue }
+            out[code] = clamped
+        }
+        return out
+    }
+
+    private nonisolated static func prunedFeedUncollapseMap(_ raw: [String: Double], now: Double) -> [String: Double] {
+        var out: [String: Double] = [:]
+        out.reserveCapacity(raw.count)
+        for (uid, until) in raw {
+            let trimmed = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            guard until > now else { continue }
+            out[trimmed] = until
         }
         return out
     }

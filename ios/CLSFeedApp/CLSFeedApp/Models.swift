@@ -184,6 +184,66 @@ enum FeedFilterOption: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+struct FeedQualitySnapshot: Codable, Hashable {
+    var collapseThreshold: Int
+    var sourcePriorityByCode: [String: Int]
+    var uncollapseUIDs: Set<String>
+
+    static let `default` = FeedQualitySnapshot(
+        collapseThreshold: 72,
+        sourcePriorityByCode: [:],
+        uncollapseUIDs: []
+    )
+
+    func priority(for sourceCode: String) -> Int {
+        let raw = sourcePriorityByCode[sourceCode] ?? 0
+        return max(-3, min(3, raw))
+    }
+}
+
+struct FeedNoiseReductionStats: Hashable {
+    var rawCount: Int
+    var clusteredCount: Int
+    var reducedCount: Int
+
+    static let empty = FeedNoiseReductionStats(rawCount: 0, clusteredCount: 0, reducedCount: 0)
+
+    var reductionRate: Double {
+        guard rawCount > 0 else { return 0 }
+        return Double(max(0, reducedCount)) / Double(rawCount)
+    }
+}
+
+enum FeedQualityPreset: String, CaseIterable, Identifiable {
+    case highDedupe
+    case balanced
+    case keepOriginal
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .highDedupe:
+            return "高去重"
+        case .balanced:
+            return "均衡"
+        case .keepOriginal:
+            return "保留原文"
+        }
+    }
+
+    var threshold: Int {
+        switch self {
+        case .highDedupe:
+            return 62
+        case .balanced:
+            return 72
+        case .keepOriginal:
+            return 86
+        }
+    }
+}
+
 struct TelegraphWorkflowState: Hashable {
     let isPinned: Bool
     let isStarred: Bool
@@ -279,6 +339,8 @@ struct TelegraphResponse: Decodable {
 struct TelegraphCluster: Identifiable, Hashable {
     let id: String
     let items: [TelegraphItem]
+    let mergeReason: String?
+    let mergeScore: Int
 
     var primary: TelegraphItem { items[0] }
     var variants: [TelegraphItem] { Array(items.dropFirst()) }
@@ -294,6 +356,13 @@ struct TelegraphCluster: Identifiable, Hashable {
             }
         }
         return out
+    }
+
+    init(id: String, items: [TelegraphItem], mergeReason: String? = nil, mergeScore: Int = 0) {
+        self.id = id
+        self.items = items
+        self.mergeReason = mergeReason
+        self.mergeScore = mergeScore
     }
 }
 

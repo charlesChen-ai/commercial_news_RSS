@@ -77,6 +77,11 @@ final class FeedViewModel: ObservableObject {
     private var sharedSnapshotObserver: NSObjectProtocol?
     private var stagedNewItems: [TelegraphItem] = []
     private var stagedPreparedData: PreparedFeedData?
+    private var qualitySnapshot: FeedQualitySnapshot = .default
+    private var quotePreloadTask: Task<Void, Never>?
+    private var pendingQuoteCodes: Set<String> = []
+    private var inFlightQuoteCodes: Set<String> = []
+    private var quoteLastRequestedAtByCode: [String: TimeInterval] = [:]
 
     private struct PreparedFeedData {
         let normalizedFetched: [TelegraphItem]
@@ -89,11 +94,15 @@ final class FeedViewModel: ObservableObject {
         label: "cls.feed.processing",
         qos: .userInitiated
     )
+    private static let canonicalTextCacheQueue = DispatchQueue(label: "cls.feed.canonical.cache")
+    private static var canonicalTextCache: [String: String] = [:]
+    private static let canonicalTextCacheLimit = 3000
 
     init(scope: String = "home", persistence: FeedPersistenceStore? = nil, retryQueue: AIRetryQueueStore = .shared) {
         self.scope = scope
         self.persistence = persistence ?? FeedPersistenceStore(scope: scope)
         self.retryQueue = retryQueue
+        self.qualitySnapshot = AppSettings.feedQualitySnapshot()
 
         let state = self.persistence.loadState()
         notifiedUIDs = state.notifiedUIDs
@@ -115,13 +124,14 @@ final class FeedViewModel: ObservableObject {
 
         if !seedItems.isEmpty {
             items = seedItems
-            clusters = TelegraphClusterer.buildClusters(from: seedItems)
+            clusters = TelegraphClusterer.buildClusters(from: seedItems, quality: qualitySnapshot)
             displayClusters = Self.computeDisplayClusters(
                 from: clusters,
                 filter: filter,
                 pinnedUIDs: pinnedUIDs,
                 starredUIDs: starredUIDs,
-                laterUIDs: laterUIDs
+                laterUIDs: laterUIDs,
+                sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
             )
             hasLoadedSnapshot = true
         }
@@ -158,6 +168,7 @@ final class FeedViewModel: ObservableObject {
     }
 
     deinit {
+        quotePreloadTask?.cancel()
         if let cloudStateObserver {
             NotificationCenter.default.removeObserver(cloudStateObserver)
         }
@@ -198,6 +209,7 @@ final class FeedViewModel: ObservableObject {
     }
 
     func refresh(using settings: AppSettings, trigger: RefreshTrigger = .manual) async {
+        qualitySnapshot = settings.feedQualitySnapshot
         if isLoading {
             if trigger == .manual, !manualRefreshPending {
                 manualRefreshPending = true
@@ -278,6 +290,7 @@ final class FeedViewModel: ObservableObject {
                 pinnedUIDs: pinnedUIDs,
                 starredUIDs: starredUIDs,
                 laterUIDs: laterUIDs,
+                qualitySnapshot: qualitySnapshot,
                 trigger: trigger
             )
             let nextCursor = resolveNextCursor(
@@ -298,7 +311,7 @@ final class FeedViewModel: ObservableObject {
                 feedError = nil
                 lastSuccessfulRefreshAt = Date()
                 persistence.saveLastSuccess(lastSuccessfulRefreshAt)
-                await preloadQuotes(for: Array(displayClusters.prefix(40)))
+                scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
                 await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
                 return
             }
@@ -309,7 +322,7 @@ final class FeedViewModel: ObservableObject {
                 feedError = nil
                 stateAtExit = .idle
                 refreshSucceeded = true
-                await preloadQuotes(for: Array(displayClusters.prefix(40)))
+                scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
                 await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
                 return
             }
@@ -334,7 +347,7 @@ final class FeedViewModel: ObservableObject {
                 hasLoadedSnapshot = true
             }
 
-            await preloadQuotes(for: Array(displayClusters.prefix(40)))
+            scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
             await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
             stateAtExit = .idle
             refreshSucceeded = true
@@ -353,13 +366,14 @@ final class FeedViewModel: ObservableObject {
                 let snapshot = Self.normalizedItems(from: persistence.loadState().latestItems)
                 if !snapshot.isEmpty {
                     items = snapshot
-                    clusters = TelegraphClusterer.buildClusters(from: snapshot)
+                    clusters = TelegraphClusterer.buildClusters(from: snapshot, quality: qualitySnapshot)
                     displayClusters = Self.computeDisplayClusters(
                         from: clusters,
                         filter: filter,
                         pinnedUIDs: pinnedUIDs,
                         starredUIDs: starredUIDs,
-                        laterUIDs: laterUIDs
+                        laterUIDs: laterUIDs,
+                        sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
                     )
                 }
             }
@@ -367,7 +381,7 @@ final class FeedViewModel: ObservableObject {
             if !items.isEmpty {
                 feedError = nil
                 stateAtExit = .fallbackUsingCache
-                await preloadQuotes(for: Array(displayClusters.prefix(40)))
+                scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
                 await drainAIQueueIfPossible(using: settings, limit: trigger == .manual ? 3 : 1)
                 return
             }
@@ -380,6 +394,7 @@ final class FeedViewModel: ObservableObject {
 
     @discardableResult
     func applyPendingNewItems(using settings: AppSettings) async -> Int {
+        qualitySnapshot = settings.feedQualitySnapshot
         guard !stagedNewItems.isEmpty else { return 0 }
 
         refreshState = .applyingPending
@@ -394,7 +409,8 @@ final class FeedViewModel: ObservableObject {
                 filter: filter,
                 pinnedUIDs: pinnedUIDs,
                 starredUIDs: starredUIDs,
-                laterUIDs: laterUIDs
+                laterUIDs: laterUIDs,
+                sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
             )
             prepared = PreparedFeedData(
                 normalizedFetched: stagedPrepared.normalizedFetched,
@@ -411,6 +427,7 @@ final class FeedViewModel: ObservableObject {
                 pinnedUIDs: pinnedUIDs,
                 starredUIDs: starredUIDs,
                 laterUIDs: laterUIDs,
+                qualitySnapshot: qualitySnapshot,
                 trigger: .manual
             )
         }
@@ -419,12 +436,15 @@ final class FeedViewModel: ObservableObject {
         clusters = prepared.clusters
         displayClusters = prepared.displayClusters
         persistLatestItems(prepared.mergedItems)
+        scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
         lastSuccessfulRefreshAt = Date()
         persistence.saveLastSuccess(lastSuccessfulRefreshAt)
         _ = syncKeywordHitsToFavorites(using: settings, recomputeAfterSync: false)
         let quoteTargets = Array(displayClusters.prefix(40))
         Task { [quoteTargets] in
-            await self.preloadQuotes(for: quoteTargets)
+            await MainActor.run {
+                self.scheduleQuotePreload(for: quoteTargets)
+            }
         }
         refreshState = .idle
         AppTelemetryCenter.shared.record(
@@ -592,6 +612,7 @@ final class FeedViewModel: ObservableObject {
         pinnedUIDs: Set<String>,
         starredUIDs: Set<String>,
         laterUIDs: Set<String>,
+        qualitySnapshot: FeedQualitySnapshot,
         trigger: RefreshTrigger
     ) async -> PreparedFeedData {
         await withCheckedContinuation { continuation in
@@ -602,13 +623,14 @@ final class FeedViewModel: ObservableObject {
                     previousItems: previousItems,
                     trigger: trigger
                 )
-                let nextClusters = TelegraphClusterer.buildClusters(from: mergedItems)
+                let nextClusters = TelegraphClusterer.buildClusters(from: mergedItems, quality: qualitySnapshot)
                 let nextDisplay = Self.computeDisplayClusters(
                     from: nextClusters,
                     filter: filter,
                     pinnedUIDs: pinnedUIDs,
                     starredUIDs: starredUIDs,
-                    laterUIDs: laterUIDs
+                    laterUIDs: laterUIDs,
+                    sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
                 )
                 continuation.resume(
                     returning: PreparedFeedData(
@@ -678,6 +700,27 @@ final class FeedViewModel: ObservableObject {
         filter = next
         recomputeDisplayClusters()
         persistence.saveFilter(next)
+    }
+
+    func applyQualitySettings(using settings: AppSettings) async {
+        qualitySnapshot = settings.feedQualitySnapshot
+        guard !items.isEmpty else {
+            recomputeDisplayClusters()
+            return
+        }
+        let prepared = await prepareFeedData(
+            from: items,
+            previousItems: items,
+            filter: filter,
+            pinnedUIDs: pinnedUIDs,
+            starredUIDs: starredUIDs,
+            laterUIDs: laterUIDs,
+            qualitySnapshot: qualitySnapshot,
+            trigger: .manual
+        )
+        clusters = prepared.clusters
+        displayClusters = prepared.displayClusters
+        persistLatestItems(prepared.mergedItems)
     }
 
     func togglePinned(uid: String) {
@@ -780,33 +823,74 @@ final class FeedViewModel: ObservableObject {
         return f.string(from: date)
     }
 
-    private func preloadQuotes(for clusters: [TelegraphCluster]) async {
-        var candidateCodes: [String] = []
+    private func scheduleQuotePreload(for clusters: [TelegraphCluster]) {
         var seen = Set<String>()
+        var candidateCodes: [String] = []
+        candidateCodes.reserveCapacity(20)
 
         for cluster in clusters {
             for item in cluster.items {
                 for code in relatedCodes(for: item) where seen.insert(code).inserted {
                     candidateCodes.append(code)
-                    if candidateCodes.count >= 16 { break }
+                    if candidateCodes.count >= 20 { break }
                 }
-                if candidateCodes.count >= 16 { break }
+                if candidateCodes.count >= 20 { break }
             }
-            if candidateCodes.count >= 16 { break }
+            if candidateCodes.count >= 20 { break }
         }
 
-        if candidateCodes.isEmpty { return }
+        guard !candidateCodes.isEmpty else { return }
+        pendingQuoteCodes.formUnion(candidateCodes)
+        scheduleQuoteFlush(delayNS: 220_000_000)
+    }
 
-        var fetchList: [String] = []
+    private func scheduleQuoteFlush(delayNS: UInt64) {
+        quotePreloadTask?.cancel()
+        quotePreloadTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delayNS)
+            guard !Task.isCancelled else { return }
+            await self?.flushQuotePreloadQueue()
+        }
+    }
+
+    private func flushQuotePreloadQueue() async {
+        quotePreloadTask = nil
+        guard !pendingQuoteCodes.isEmpty else { return }
+
         let now = Date()
-        for code in candidateCodes {
-            if let q = quoteByCode[code], now.timeIntervalSince(q.updatedAt) < 35 {
+        let nowTS = now.timeIntervalSince1970
+        let candidates = Array(pendingQuoteCodes.prefix(20))
+        pendingQuoteCodes.subtract(candidates)
+
+        var deferred = Set<String>()
+        var fetchList: [String] = []
+        for code in candidates {
+            if inFlightQuoteCodes.contains(code) {
+                deferred.insert(code)
                 continue
             }
+            if let quote = quoteByCode[code], now.timeIntervalSince(quote.updatedAt) < 35 {
+                continue
+            }
+            if let last = quoteLastRequestedAtByCode[code], nowTS - last < 10 {
+                deferred.insert(code)
+                continue
+            }
+            quoteLastRequestedAtByCode[code] = nowTS
+            inFlightQuoteCodes.insert(code)
             fetchList.append(code)
         }
 
-        if fetchList.isEmpty { return }
+        if !deferred.isEmpty {
+            pendingQuoteCodes.formUnion(deferred)
+        }
+
+        if fetchList.isEmpty {
+            if !pendingQuoteCodes.isEmpty {
+                scheduleQuoteFlush(delayNS: 900_000_000)
+            }
+            return
+        }
 
         await withTaskGroup(of: (String, StockQuote?).self) { group in
             for code in fetchList {
@@ -824,7 +908,12 @@ final class FeedViewModel: ObservableObject {
                 if let quote {
                     quoteByCode[code] = quote
                 }
+                inFlightQuoteCodes.remove(code)
             }
+        }
+
+        if !pendingQuoteCodes.isEmpty {
+            scheduleQuoteFlush(delayNS: 260_000_000)
         }
     }
 
@@ -915,6 +1004,7 @@ final class FeedViewModel: ObservableObject {
             pinnedUIDs: pinnedUIDs,
             starredUIDs: starredUIDs,
             laterUIDs: laterUIDs,
+            qualitySnapshot: qualitySnapshot,
             trigger: .auto
         )
 
@@ -922,6 +1012,7 @@ final class FeedViewModel: ObservableObject {
         clusters = prepared.clusters
         displayClusters = prepared.displayClusters
         persistLatestItems(prepared.mergedItems)
+        scheduleQuotePreload(for: Array(displayClusters.prefix(40)))
     }
 
     private func persistAnalysisCache() {
@@ -1004,7 +1095,8 @@ final class FeedViewModel: ObservableObject {
             filter: filter,
             pinnedUIDs: pinnedUIDs,
             starredUIDs: starredUIDs,
-            laterUIDs: laterUIDs
+            laterUIDs: laterUIDs,
+            sourcePriorityByCode: qualitySnapshot.sourcePriorityByCode
         )
     }
 
@@ -1013,7 +1105,8 @@ final class FeedViewModel: ObservableObject {
         filter: FeedFilterOption,
         pinnedUIDs: Set<String>,
         starredUIDs: Set<String>,
-        laterUIDs: Set<String>
+        laterUIDs: Set<String>,
+        sourcePriorityByCode: [String: Int] = [:]
     ) -> [TelegraphCluster] {
         let prepared = clusters
             .map(reorderedClusterByContent)
@@ -1035,6 +1128,10 @@ final class FeedViewModel: ObservableObject {
             let lp = pinnedUIDs.contains(lhs.primary.uid)
             let rp = pinnedUIDs.contains(rhs.primary.uid)
             if lp != rp { return lp }
+
+            let ls = sourcePriorityByCode[lhs.primary.source] ?? 0
+            let rs = sourcePriorityByCode[rhs.primary.source] ?? 0
+            if ls != rs { return ls > rs }
 
             if lhs.primary.ctime != rhs.primary.ctime { return lhs.primary.ctime > rhs.primary.ctime }
             return lhs.primary.uid > rhs.primary.uid
@@ -1216,13 +1313,31 @@ final class FeedViewModel: ObservableObject {
     }
 
     private nonisolated static func canonicalReadableText(_ raw: String) -> String {
-        raw
+        let key = canonicalCacheKey(for: raw)
+        if let cached = canonicalTextCacheQueue.sync(execute: { canonicalTextCache[key] }) {
+            return cached
+        }
+
+        let normalized = raw
             .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
             .replacingOccurrences(of: "^【[^】]{2,30}】", with: "", options: .regularExpression)
             .replacingOccurrences(of: "^(财联社|新浪财经|华尔街见闻|同花顺|东方财富)(\\d{1,2}月\\d{1,2}日)?电[，,:：\\s]*", with: "", options: .regularExpression)
             .replacingOccurrences(of: "[\\u200B\\u200C\\u200D\\u2060\\uFEFF]", with: "", options: .regularExpression)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        canonicalTextCacheQueue.sync {
+            if canonicalTextCache.count > canonicalTextCacheLimit {
+                canonicalTextCache.removeAll(keepingCapacity: true)
+            }
+            canonicalTextCache[key] = normalized
+        }
+        return normalized
+    }
+
+    private nonisolated static func canonicalCacheKey(for raw: String) -> String {
+        let head = raw.prefix(48)
+        let tail = raw.suffix(24)
+        return "\(raw.count)|\(head)|\(tail)"
     }
 
     private nonisolated static func hasMeaningfulCharacter(in text: String) -> Bool {

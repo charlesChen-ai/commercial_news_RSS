@@ -82,6 +82,7 @@ struct FavoritesView: View {
                                         AppHaptics.impact()
                                     },
                                     keywordSuggestion: keywordSuggestion,
+                                    inlineActions: [],
                                     onAnalyze: {
                                         Task { await viewModel.analyze(item: cluster.primary, settings: settings) }
                                     }
@@ -164,6 +165,12 @@ struct FavoritesView: View {
             .onChange(of: settings.sourceMuteUntilByCode) { _ in
                 guard isActive else { return }
                 Task { await viewModel.refresh(using: settings, trigger: .manual) }
+            }
+            .onChange(of: settings.feedCollapseThreshold) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
+            }
+            .onChange(of: settings.feedSourcePriorityByCode) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
             }
             .onChange(of: viewModel.aiError) { value in
                 if let value, !value.isEmpty {

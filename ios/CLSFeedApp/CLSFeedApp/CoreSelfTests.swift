@@ -5,6 +5,7 @@ enum CoreSelfTests {
     static func run() async {
         testPersistenceStore()
         testClusterer()
+        testClustererQualityControls()
         testRefreshStateLabel()
         testTelemetryCenter()
         await testErrorCenter()
@@ -73,6 +74,48 @@ enum CoreSelfTests {
         let clusters = TelegraphClusterer.buildClusters(from: [a, b])
         assert(clusters.count == 1, "SelfTest: cluster merge failed")
         assert(clusters[0].items.count == 2, "SelfTest: cluster item count failed")
+    }
+
+    private static func testClustererQualityControls() {
+        let lhs = TelegraphItem(
+            uid: "qa-1",
+            source: NewsSource.cls.rawValue,
+            sourceName: "财联社",
+            ctime: 1_700_001_100,
+            time: "10:01",
+            title: "央行下调逆回购利率10BP",
+            text: "今日公开市场操作利率下调10个基点。",
+            author: "",
+            level: "A",
+            url: ""
+        )
+        let rhs = TelegraphItem(
+            uid: "qa-2",
+            source: NewsSource.sina.rawValue,
+            sourceName: "新浪财经",
+            ctime: 1_700_001_120,
+            time: "10:02",
+            title: "央行宣布下调逆回购利率并释放流动性",
+            text: "公开市场操作利率下调，释放短期流动性。",
+            author: "",
+            level: "B",
+            url: ""
+        )
+
+        let conservative = FeedQualitySnapshot(collapseThreshold: 86, sourcePriorityByCode: [:])
+        let aggressive = FeedQualitySnapshot(collapseThreshold: 66, sourcePriorityByCode: [:])
+        let conservativeClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: conservative)
+        let aggressiveClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: aggressive)
+        assert(conservativeClusters.count >= aggressiveClusters.count, "SelfTest: threshold collapse regression")
+
+        let prioritized = FeedQualitySnapshot(
+            collapseThreshold: 70,
+            sourcePriorityByCode: [NewsSource.sina.rawValue: 3]
+        )
+        let prioritizedClusters = TelegraphClusterer.buildClusters(from: [lhs, rhs], quality: prioritized)
+        if let first = prioritizedClusters.first {
+            assert(first.primary.source == NewsSource.sina.rawValue, "SelfTest: source priority not applied")
+        }
     }
 
     @MainActor

@@ -11,6 +11,7 @@ struct FeedView: View {
     @ObservedObject var viewModel: FeedViewModel
     @State private var showRecapSheet = false
     @State private var expandedClusterIDs: Set<String> = []
+    @State private var variantVisibleCountByClusterID: [String: Int] = [:]
     @State private var selectedCluster: TelegraphCluster?
     @State private var topSection: FeedTopSection = .headline
     @State private var cachedHeadlineClusters: [TelegraphCluster] = []
@@ -76,10 +77,12 @@ struct FeedView: View {
                 viewModel.startAutoRefresh(using: settings, immediateRefresh: false)
             }
             .onChange(of: viewModel.displayClusters) { _ in
+                pruneClusterTransientState()
                 recomputeSectionCaches()
             }
             .onChange(of: viewModel.isLoading) { loading in
                 guard !loading else { return }
+                pruneClusterTransientState()
                 recomputeSectionCaches()
             }
             .onChange(of: settings.keywordSubscriptions) { _ in
@@ -123,6 +126,15 @@ struct FeedView: View {
                 viewModel.invalidateCursor()
                 guard isActive else { return }
                 Task { await viewModel.refresh(using: settings, trigger: .manual) }
+            }
+            .onChange(of: settings.feedCollapseThreshold) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
+            }
+            .onChange(of: settings.feedSourcePriorityByCode) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
+            }
+            .onChange(of: settings.feedUncollapseUIDUntilByUID) { _ in
+                Task { await viewModel.applyQualitySettings(using: settings) }
             }
             .onChange(of: settings.aiRetryQueueEnabled) { enabled in
                 guard enabled else { return }
@@ -535,6 +547,7 @@ struct FeedView: View {
         let showMetaRow = !keywordHits.isEmpty
         let workflow = viewModel.workflowState(for: cluster.primary)
         let keywordSuggestion = suggestedKeyword(for: cluster.primary)
+        let inlineActions = cardInlineActions(for: cluster, allowEventDetail: allowEventDetail)
 
         return VStack(spacing: 10) {
             TelegraphCardView(
@@ -564,6 +577,7 @@ struct FeedView: View {
                     AppHaptics.impact()
                 },
                 keywordSuggestion: keywordSuggestion,
+                inlineActions: inlineActions,
                 onAnalyze: {
                     Task { await viewModel.analyze(item: cluster.primary, settings: settings) }
                 }
@@ -587,7 +601,7 @@ struct FeedView: View {
             }
 
             if cluster.isMerged {
-                clusterFooter(cluster, allowEventDetail: allowEventDetail)
+                clusterFooter(cluster)
             }
 
             if expandedClusterIDs.contains(cluster.id), !cluster.variants.isEmpty {
@@ -617,59 +631,61 @@ struct FeedView: View {
         }
     }
 
-    private func clusterFooter(_ cluster: TelegraphCluster, allowEventDetail: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+    private func clusterFooter(_ cluster: TelegraphCluster) -> some View {
+        HStack(spacing: 8) {
+            Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-                Text(cluster.sourceNames.joined(separator: " / "))
-                    .font(.caption)
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
+            Text(cluster.sourceNames.joined(separator: " / "))
+                .font(.caption)
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
 
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 8) {
-                if allowEventDetail {
-                    Button {
-                        viewModel.markRead(uid: cluster.primary.uid)
-                        selectedCluster = cluster
-                    } label: {
-                        Label("事件详情", systemImage: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.06), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        if expandedClusterIDs.contains(cluster.id) {
-                            expandedClusterIDs.remove(cluster.id)
-                        } else {
-                            expandedClusterIDs.insert(cluster.id)
-                        }
-                    }
-                } label: {
-                    Text(expandedClusterIDs.contains(cluster.id) ? "收起版本" : "展开版本")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.blue.opacity(0.1), in: Capsule())
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 1)
         .padding(.horizontal, 4)
+    }
+
+    private func cardInlineActions(for cluster: TelegraphCluster, allowEventDetail: Bool) -> [TelegraphInlineAction] {
+        guard cluster.isMerged else { return [] }
+        var out: [TelegraphInlineAction] = []
+
+        if allowEventDetail {
+            out.append(
+                TelegraphInlineAction(
+                    id: "detail-\(cluster.id)",
+                    title: "事件详情",
+                    icon: "chevron.right"
+                ) {
+                    viewModel.markRead(uid: cluster.primary.uid)
+                    selectedCluster = cluster
+                    AppHaptics.selection()
+                }
+            )
+        }
+
+        let expanded = expandedClusterIDs.contains(cluster.id)
+        out.append(
+            TelegraphInlineAction(
+                id: "expand-\(cluster.id)",
+                title: expanded ? "收起版本" : "展开版本",
+                icon: expanded ? "chevron.up" : "chevron.down",
+                isActive: expanded
+            ) {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    if expandedClusterIDs.contains(cluster.id) {
+                        expandedClusterIDs.remove(cluster.id)
+                    } else {
+                        expandedClusterIDs.insert(cluster.id)
+                    }
+                }
+                AppHaptics.selection()
+            }
+        )
+
+        return out
     }
 
     private func variantRow(_ item: TelegraphItem) -> some View {

@@ -202,6 +202,7 @@ struct ConsoleView: View {
             serviceCard
             backgroundDiagnosticsCard
             sourcePanelCard
+            feedQualityCard
             telemetryCard
         case .account:
             accountCard
@@ -667,6 +668,62 @@ struct ConsoleView: View {
         }
     }
 
+    private var feedQualityCard: some View {
+        settingsCard(title: "消息质量控制") {
+            HStack {
+                Text("重复快讯折叠阈值")
+                Spacer()
+                Text("\(Int(settings.feedCollapseThreshold))")
+                    .font(.footnote.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $settings.feedCollapseThreshold, in: 55...90, step: 1)
+
+            Text(collapseThresholdHintText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Text("来源权重（影响同事件主版本与同时间排序）")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            ForEach(NewsSource.allCases) { source in
+                HStack {
+                    Text(source.displayName)
+                    Spacer()
+                    Stepper(
+                        value: Binding(
+                            get: { settings.sourcePriorityWeight(source) },
+                            set: { settings.setSourcePriority(source, weight: $0) }
+                        ),
+                        in: -3...3
+                    ) {
+                        Text(sourcePriorityText(settings.sourcePriorityWeight(source)))
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if source != NewsSource.allCases.last {
+                    Divider()
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button("恢复默认") {
+                    settings.feedCollapseThreshold = Double(FeedQualitySnapshot.default.collapseThreshold)
+                    settings.resetSourcePriorityWeights()
+                }
+                .buttonStyle(.bordered)
+
+                Button("偏激进折叠") {
+                    settings.feedCollapseThreshold = 62
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
     private var telemetryCard: some View {
         settingsCard(title: "性能与行为遥测") {
             HStack {
@@ -916,6 +973,28 @@ struct ConsoleView: View {
             return .green
         }
         return .secondary
+    }
+
+    private var collapseThresholdHintText: String {
+        let value = Int(settings.feedCollapseThreshold.rounded())
+        if value <= 64 {
+            return "当前更激进：会把相似快讯更容易折叠到同事件。"
+        }
+        if value >= 82 {
+            return "当前更保守：只在高度相似时折叠，保留更多独立快讯。"
+        }
+        return "当前均衡：兼顾去重与信息完整度。"
+    }
+
+    private func sourcePriorityText(_ value: Int) -> String {
+        let clamped = max(-3, min(3, value))
+        if clamped == 0 {
+            return "0（默认）"
+        }
+        if clamped > 0 {
+            return "+\(clamped)（优先）"
+        }
+        return "\(clamped)（降权）"
     }
 
     private func estimatedPushPerDay() -> Int {

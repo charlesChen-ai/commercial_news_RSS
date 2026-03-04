@@ -1,5 +1,27 @@
 import SwiftUI
 
+struct TelegraphInlineAction: Identifiable {
+    let id: String
+    let title: String
+    let icon: String
+    let isActive: Bool
+    let action: () -> Void
+
+    init(
+        id: String,
+        title: String,
+        icon: String,
+        isActive: Bool = false,
+        action: @escaping () -> Void
+    ) {
+        self.id = id
+        self.title = title
+        self.icon = icon
+        self.isActive = isActive
+        self.action = action
+    }
+}
+
 struct TelegraphCardView: View {
     let item: TelegraphItem
     let quotes: [StockQuote]
@@ -13,6 +35,7 @@ struct TelegraphCardView: View {
     let onMuteSource7d: (() -> Void)?
     let onAddKeyword: (() -> Void)?
     let keywordSuggestion: String?
+    let inlineActions: [TelegraphInlineAction]
     let onAnalyze: () -> Void
 
     @State private var expandText = false
@@ -193,8 +216,27 @@ struct TelegraphCardView: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 8) {
-            Spacer(minLength: 0)
+        HStack(spacing: 10) {
+            if !inlineActions.isEmpty {
+                HStack(spacing: 14) {
+                    ForEach(inlineActions) { action in
+                        Button {
+                            action.action()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: action.icon)
+                                    .font(.caption2.weight(.semibold))
+                                Text(action.title)
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .foregroundStyle(action.isActive ? TwitterTheme.accent : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
 
             Button {
                 onAnalyze()
