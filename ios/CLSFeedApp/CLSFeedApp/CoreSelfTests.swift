@@ -5,6 +5,8 @@ enum CoreSelfTests {
     static func run() async {
         testPersistenceStore()
         testClusterer()
+        testRefreshStateLabel()
+        testTelemetryCenter()
         await testErrorCenter()
     }
 
@@ -85,6 +87,43 @@ enum CoreSelfTests {
         assert(center.alert != nil, "SelfTest: alert should be set")
         center.clearAlert()
         assert(center.alert == nil, "SelfTest: alert should be cleared")
+    }
+
+    private static func testRefreshStateLabel() {
+        let a = FeedRefreshState.idle.displayText
+        let b = FeedRefreshState.loading(.manual).displayText
+        let c = FeedRefreshState.stagingPending(3).displayText
+        assert(a == "空闲", "SelfTest: refresh idle label mismatch")
+        assert(!b.isEmpty && b.contains("刷新"), "SelfTest: refresh loading label mismatch")
+        assert(c.contains("3"), "SelfTest: refresh staging label mismatch")
+    }
+
+    private static func testTelemetryCenter() {
+        let suite = "cls.debug.telemetry.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            assertionFailure("SelfTest: unable to create telemetry defaults")
+            return
+        }
+        defaults.removePersistentDomain(forName: suite)
+
+        let center = AppTelemetryCenter(defaults: defaults, storageKey: "telemetry.selftest", maxEvents: 10)
+        center.clear()
+        center.record(name: "tab_switch", value: 12)
+        center.record(name: "feed_refresh", value: 95, meta: ["state": "空闲"])
+        center.record(name: "feed_refresh_error", meta: ["message": "mock"])
+        center.record(name: "pending_apply", value: 4)
+
+        // Wait shortly for async enqueue to flush into isolated defaults.
+        Thread.sleep(forTimeInterval: 0.03)
+
+        let summary = center.summary()
+        assert(summary.totalEvents >= 4, "SelfTest: telemetry total mismatch")
+        assert(summary.averageTabSwitchMS >= 12, "SelfTest: telemetry tab avg mismatch")
+        assert(summary.averageFeedRefreshMS >= 95, "SelfTest: telemetry refresh avg mismatch")
+        assert(summary.refreshErrorCount24h >= 1, "SelfTest: telemetry error count mismatch")
+        assert(summary.pendingAppliedTotal >= 4, "SelfTest: telemetry pending count mismatch")
+
+        defaults.removePersistentDomain(forName: suite)
     }
 }
 #endif

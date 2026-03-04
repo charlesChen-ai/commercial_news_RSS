@@ -1,8 +1,10 @@
 'use strict';
 
 const http = require('http');
+const http2 = require('http2');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 
 const HOST = process.env.HOST || '0.0.0.0';
@@ -62,6 +64,13 @@ const cache = {
   payload: null,
   ttlMs: 3000,
 };
+const deviceRegistry = new Map();
+const silentPushAudit = [];
+
+const RUNTIME_DIR = path.join(__dirname, '.runtime');
+const DEVICE_REGISTRY_FILE = path.join(RUNTIME_DIR, 'device-registry.json');
+const PUSH_AUDIT_FILE = path.join(RUNTIME_DIR, 'silent-push-audit.json');
+const ACCOUNT_STORE_FILE = path.join(RUNTIME_DIR, 'account-store.json');
 
 const aiConfig = {
   provider: process.env.AI_PROVIDER || process.env.LLM_PROVIDER || 'deepseek',
@@ -78,6 +87,36 @@ const aiConfig = {
     'deepseek-chat',
   cacheTtlMs: Number(process.env.AI_CACHE_TTL_MS || 6 * 60 * 60 * 1000),
   cacheMax: Number(process.env.AI_CACHE_MAX || 800),
+};
+
+const apnsConfig = {
+  teamId: String(process.env.APNS_TEAM_ID || '').trim(),
+  keyId: String(process.env.APNS_KEY_ID || '').trim(),
+  bundleId: String(process.env.APNS_BUNDLE_ID || process.env.IOS_BUNDLE_ID || '').trim(),
+  keyPath: String(process.env.APNS_P8_PATH || '').trim(),
+  keyBase64: String(process.env.APNS_P8_BASE64 || '').trim(),
+  useProduction: /^(1|true|yes)$/i.test(String(process.env.APNS_USE_PRODUCTION || '').trim()),
+  tokenTtlSec: clampNumber(process.env.APNS_TOKEN_TTL_SEC || 50 * 60, 10 * 60, 59 * 60),
+  timeoutMs: clampNumber(process.env.APNS_TIMEOUT_MS || 8000, 1500, 20000),
+  maxConcurrency: clampNumber(process.env.APNS_MAX_CONCURRENCY || 8, 1, 24),
+};
+const apnsJwtCache = {
+  token: '',
+  expireAt: 0,
+  keyFingerprint: '',
+};
+
+const accountStore = {
+  accounts: new Map(),
+  phoneIndex: new Map(),
+  appleIndex: new Map(),
+  sessions: new Map(),
+  phoneCodes: new Map(),
+};
+
+const authConfig = {
+  debugReturnCode: !/^(0|false|no)$/i.test(String(process.env.AUTH_DEBUG_CODE_RESPONSE || 'true')),
+  sessionDays: clampNumber(process.env.AUTH_SESSION_DAYS || 30, 1, 180),
 };
 
 const aiCache = new Map();
@@ -131,6 +170,501 @@ function parseSources(searchParams) {
 
   if (out.length === 0) throw new Error('invalid_sources');
   return out;
+}
+
+function parseBoolean(input, fallback = false) {
+  if (typeof input === 'boolean') return input;
+  const text = String(input || '').trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
+  return fallback;
+}
+
+function normalizeClock(raw, fallback = '22:30') {
+  const text = String(raw || '').trim();
+  if (!text) return fallback;
+  const m = text.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!m) return fallback;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return fallback;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function ensureRuntimeDir() {
+  try {
+    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  } catch (_) {
+    // ignore runtime dir failure; process will fallback to in-memory mode.
+  }
+}
+
+function loadJSONFile(filename, fallback) {
+  try {
+    const raw = fs.readFileSync(filename, 'utf8');
+    if (!raw || !raw.trim()) return fallback;
+    return JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function writeJSONAtomic(filename, payload) {
+  const temp = `${filename}.tmp`;
+  const text = JSON.stringify(payload, null, 2);
+  fs.writeFileSync(temp, text, 'utf8');
+  fs.renameSync(temp, filename);
+}
+
+function persistDeviceRegistry() {
+  try {
+    ensureRuntimeDir();
+    writeJSONAtomic(DEVICE_REGISTRY_FILE, {
+      updatedAt: new Date().toISOString(),
+      count: deviceRegistry.size,
+      devices: Array.from(deviceRegistry.values()),
+    });
+  } catch (_) {
+    // ignore disk persistence failure
+  }
+}
+
+function persistPushAudit() {
+  try {
+    ensureRuntimeDir();
+    writeJSONAtomic(PUSH_AUDIT_FILE, {
+      updatedAt: new Date().toISOString(),
+      count: silentPushAudit.length,
+      records: silentPushAudit,
+    });
+  } catch (_) {
+    // ignore disk persistence failure
+  }
+}
+
+function bootstrapRuntimeStores() {
+  ensureRuntimeDir();
+
+  const deviceState = loadJSONFile(DEVICE_REGISTRY_FILE, null);
+  const loadedDevices = Array.isArray(deviceState && deviceState.devices) ? deviceState.devices : [];
+  for (const row of loadedDevices) {
+    const token = normalizeDeviceToken(row && row.deviceToken);
+    if (!token) continue;
+    deviceRegistry.set(token, {
+      deviceToken: token,
+      platform: String((row && row.platform) || 'ios').trim().toLowerCase() || 'ios',
+      bundleId: String((row && row.bundleId) || '').trim().slice(0, 120),
+      appVersion: String((row && row.appVersion) || '').trim().slice(0, 40),
+      pushEnabled: Boolean(row && row.pushEnabled),
+      keywords: normalizeKeywordList(row && row.keywords),
+      sources: normalizeSourceList(row && row.sources),
+      accountId: String((row && row.accountId) || '').trim().slice(0, 80),
+      pushPolicy: sanitizePushPolicy(
+        row && row.pushPolicy ? row.pushPolicy : {
+          mode: 'all',
+          tradingHoursOnly: false,
+          dndEnabled: false,
+          dndStart: '22:30',
+          dndEnd: '07:30',
+          rateLimitPerHour: 8,
+          sources: normalizeSourceList(row && row.sources),
+        }
+      ),
+      pushHistory: Array.isArray(row && row.pushHistory)
+        ? row.pushHistory
+            .map((x) => Number(x) || 0)
+            .filter((x) => x > 0)
+            .slice(-300)
+        : [],
+      updatedAt: String((row && row.updatedAt) || new Date().toISOString()),
+      createdAt: String((row && row.createdAt) || new Date().toISOString()),
+    });
+  }
+
+  const auditState = loadJSONFile(PUSH_AUDIT_FILE, null);
+  const records = Array.isArray(auditState && auditState.records) ? auditState.records : [];
+  for (const row of records.slice(-200)) {
+    if (!row || typeof row !== 'object') continue;
+    silentPushAudit.push(row);
+  }
+}
+
+function nowISO() {
+  return new Date().toISOString();
+}
+
+function randomToken(size = 24) {
+  return crypto.randomBytes(size).toString('hex');
+}
+
+function normalizePhone(raw) {
+  const text = String(raw || '').trim();
+  const normalized = text.replace(/[^\d+]/g, '');
+  if (normalized.length < 6 || normalized.length > 24) return '';
+  return normalized;
+}
+
+function maskPhone(phone) {
+  const value = String(phone || '').trim();
+  if (!value) return '';
+  if (value.length <= 7) return value;
+  return `${value.slice(0, 3)}****${value.slice(-4)}`;
+}
+
+function maskAppleUser(userID) {
+  const value = String(userID || '').trim();
+  if (!value) return '';
+  if (value.length <= 8) return value;
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+function sanitizeUIDList(list, limit = 3000) {
+  const input = Array.isArray(list) ? list : [];
+  const seen = new Set();
+  const out = [];
+  for (const x of input) {
+    const uid = String(x || '').trim();
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid.slice(0, 120));
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function sanitizeKeywordSubscriptions(list) {
+  const input = Array.isArray(list) ? list : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const row of input) {
+    const keyword = String(row && row.keyword ? row.keyword : '').trim();
+    const normalized = keyword.toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push({
+      id: String((row && row.id) || randomToken(10)).slice(0, 48),
+      keyword: keyword.slice(0, 80),
+      isEnabled: row && Object.prototype.hasOwnProperty.call(row, 'isEnabled') ? Boolean(row.isEnabled) : true,
+      createdAt: clampNumber((row && row.createdAt) || Math.floor(Date.now() / 1000), 1, 32503680000),
+    });
+    if (out.length >= 500) break;
+  }
+
+  return out;
+}
+
+function sanitizePushPolicy(raw) {
+  const policy = raw && typeof raw === 'object' ? raw : {};
+  const modeRaw = String(policy.mode || '').trim();
+  const mode = ['keywordsOnly', 'highPriorityOnly', 'all'].includes(modeRaw) ? modeRaw : 'all';
+  const tradingHoursOnly = Boolean(policy.tradingHoursOnly);
+  const dndEnabled = Boolean(policy.dndEnabled);
+  const dndStart = normalizeClock(policy.dndStart, '22:30');
+  const dndEnd = normalizeClock(policy.dndEnd, '07:30');
+  const rateLimitPerHour = clampNumber(policy.rateLimitPerHour || 8, 1, 30);
+  const sources = normalizeSourceList(policy.sources);
+  return {
+    mode,
+    tradingHoursOnly,
+    dndEnabled,
+    dndStart,
+    dndEnd,
+    rateLimitPerHour,
+    sources,
+  };
+}
+
+function sanitizeCloudState(raw) {
+  const payload = raw && typeof raw === 'object' ? raw : {};
+  const selectedSources = normalizeSourceList(payload.selectedSources);
+  return {
+    starredUIDs: sanitizeUIDList(payload.starredUIDs, 4000),
+    readUIDs: sanitizeUIDList(payload.readUIDs, 6000),
+    keywordSubscriptions: sanitizeKeywordSubscriptions(payload.keywordSubscriptions),
+    selectedSources: selectedSources.length ? selectedSources : SOURCE_TASKS.map((x) => x.source),
+    pushStrategy: sanitizePushPolicy(payload.pushStrategy),
+    updatedAt: nowISO(),
+  };
+}
+
+function defaultCloudState() {
+  return sanitizeCloudState({});
+}
+
+function persistAccountStore() {
+  try {
+    ensureRuntimeDir();
+    const payload = {
+      updatedAt: nowISO(),
+      accounts: Array.from(accountStore.accounts.values()),
+      phoneIndex: Object.fromEntries(accountStore.phoneIndex),
+      appleIndex: Object.fromEntries(accountStore.appleIndex),
+      sessions: Array.from(accountStore.sessions.values()),
+    };
+    writeJSONAtomic(ACCOUNT_STORE_FILE, payload);
+  } catch (_) {
+    // ignore account store persistence failures
+  }
+}
+
+function bootstrapAccountStore() {
+  const data = loadJSONFile(ACCOUNT_STORE_FILE, null);
+  if (!data || typeof data !== 'object') return;
+
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  for (const row of accounts) {
+    if (!row || typeof row !== 'object') continue;
+    const id = String(row.id || '').trim();
+    if (!id) continue;
+    accountStore.accounts.set(id, {
+      id,
+      provider: String((row.provider) || 'phone').trim() || 'phone',
+      phone: normalizePhone(row.phone),
+      appleUserId: String((row.appleUserId) || '').trim(),
+      createdAt: String((row.createdAt) || nowISO()),
+      updatedAt: String((row.updatedAt) || nowISO()),
+      cloudState: sanitizeCloudState(row.cloudState),
+      devices: row.devices && typeof row.devices === 'object' ? row.devices : {},
+    });
+  }
+
+  const phoneIndex = data.phoneIndex && typeof data.phoneIndex === 'object' ? data.phoneIndex : {};
+  for (const [phone, accountId] of Object.entries(phoneIndex)) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) continue;
+    if (!accountStore.accounts.has(String(accountId))) continue;
+    accountStore.phoneIndex.set(normalizedPhone, String(accountId));
+  }
+
+  const appleIndex = data.appleIndex && typeof data.appleIndex === 'object' ? data.appleIndex : {};
+  for (const [appleUserId, accountId] of Object.entries(appleIndex)) {
+    const uid = String(appleUserId || '').trim();
+    if (!uid) continue;
+    if (!accountStore.accounts.has(String(accountId))) continue;
+    accountStore.appleIndex.set(uid, String(accountId));
+  }
+
+  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+  const now = Date.now();
+  for (const row of sessions) {
+    if (!row || typeof row !== 'object') continue;
+    const token = String(row.token || '').trim();
+    const accountId = String(row.accountId || '').trim();
+    if (!token || !accountId) continue;
+    if (!accountStore.accounts.has(accountId)) continue;
+    const expireAt = Number(row.expireAt) || 0;
+    if (expireAt <= now) continue;
+    accountStore.sessions.set(token, {
+      token,
+      accountId,
+      deviceId: String((row.deviceId) || '').trim(),
+      deviceName: String((row.deviceName) || '').trim().slice(0, 80),
+      createdAt: Number(row.createdAt) || now,
+      expireAt,
+    });
+  }
+}
+
+function createSession(account, deviceInfo) {
+  const now = Date.now();
+  const expireAt = now + authConfig.sessionDays * 24 * 60 * 60 * 1000;
+  const token = randomToken(32);
+  const session = {
+    token,
+    accountId: account.id,
+    deviceId: String((deviceInfo && deviceInfo.deviceId) || '').trim().slice(0, 80),
+    deviceName: String((deviceInfo && deviceInfo.deviceName) || '').trim().slice(0, 80),
+    createdAt: now,
+    expireAt,
+  };
+  accountStore.sessions.set(token, session);
+  persistAccountStore();
+  return session;
+}
+
+function buildAccountProfile(account) {
+  return {
+    accountId: account.id,
+    provider: account.provider,
+    phoneMasked: account.phone ? maskPhone(account.phone) : '',
+    appleMasked: account.appleUserId ? maskAppleUser(account.appleUserId) : '',
+    createdAt: account.createdAt,
+  };
+}
+
+function buildSessionResponse(session, account) {
+  return {
+    token: session.token,
+    expiresAt: new Date(session.expireAt).toISOString(),
+    account: buildAccountProfile(account),
+  };
+}
+
+function resolveSession(req) {
+  const auth = String(req.headers.authorization || '').trim();
+  if (!auth) return null;
+  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+  if (!token) return null;
+  const session = accountStore.sessions.get(token);
+  if (!session) return null;
+  if ((Number(session.expireAt) || 0) <= Date.now()) {
+    accountStore.sessions.delete(token);
+    persistAccountStore();
+    return null;
+  }
+  const account = accountStore.accounts.get(session.accountId);
+  if (!account) return null;
+  return { token, session, account };
+}
+
+function requireSession(req, res) {
+  const resolved = resolveSession(req);
+  if (!resolved) {
+    sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    return null;
+  }
+  return resolved;
+}
+
+function upsertPhoneAccount(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) throw new Error('invalid_phone');
+
+  const existingId = accountStore.phoneIndex.get(normalized);
+  if (existingId && accountStore.accounts.has(existingId)) {
+    const account = accountStore.accounts.get(existingId);
+    account.updatedAt = nowISO();
+    return account;
+  }
+
+  const id = `acct_${randomToken(10)}`;
+  const account = {
+    id,
+    provider: 'phone',
+    phone: normalized,
+    appleUserId: '',
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    cloudState: defaultCloudState(),
+    devices: {},
+  };
+  accountStore.accounts.set(id, account);
+  accountStore.phoneIndex.set(normalized, id);
+  persistAccountStore();
+  return account;
+}
+
+function upsertAppleAccount(appleUserId) {
+  const uid = String(appleUserId || '').trim();
+  if (!uid) throw new Error('invalid_apple_user');
+
+  const existingId = accountStore.appleIndex.get(uid);
+  if (existingId && accountStore.accounts.has(existingId)) {
+    const account = accountStore.accounts.get(existingId);
+    account.updatedAt = nowISO();
+    return account;
+  }
+
+  const id = `acct_${randomToken(10)}`;
+  const account = {
+    id,
+    provider: 'apple',
+    phone: '',
+    appleUserId: uid,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    cloudState: defaultCloudState(),
+    devices: {},
+  };
+  accountStore.accounts.set(id, account);
+  accountStore.appleIndex.set(uid, id);
+  persistAccountStore();
+  return account;
+}
+
+function issuePhoneCode(phone) {
+  const normalized = normalizePhone(phone);
+  if (!normalized) throw new Error('invalid_phone');
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expireAt = Date.now() + 5 * 60 * 1000;
+  accountStore.phoneCodes.set(normalized, { code, expireAt, issuedAt: Date.now() });
+  return { code, expireAt };
+}
+
+function verifyPhoneCode(phone, code) {
+  const normalized = normalizePhone(phone);
+  const normalizedCode = String(code || '').trim();
+  if (!normalized || !normalizedCode) throw new Error('invalid_phone_or_code');
+  const row = accountStore.phoneCodes.get(normalized);
+  if (!row) throw new Error('code_not_found');
+  if ((Number(row.expireAt) || 0) <= Date.now()) {
+    accountStore.phoneCodes.delete(normalized);
+    throw new Error('code_expired');
+  }
+  if (String(row.code) !== normalizedCode) {
+    throw new Error('code_mismatch');
+  }
+  accountStore.phoneCodes.delete(normalized);
+  return true;
+}
+
+function updateAccountCloudState(account, cloudState) {
+  if (!account || !account.id) throw new Error('account_not_found');
+  account.cloudState = sanitizeCloudState(cloudState);
+  account.updatedAt = nowISO();
+  persistAccountStore();
+  return account.cloudState;
+}
+
+function encodeCursor(ctime, uid) {
+  const safeTime = Math.max(0, Math.floor(Number(ctime) || 0));
+  const safeUid = String(uid || '').trim();
+  if (!safeUid) return null;
+  return Buffer.from(`${safeTime}|${safeUid}`, 'utf8').toString('base64');
+}
+
+function decodeCursorToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) return null;
+
+  let decoded = '';
+  try {
+    decoded = Buffer.from(raw, 'base64').toString('utf8');
+  } catch (_) {
+    return null;
+  }
+
+  const sep = decoded.indexOf('|');
+  if (sep <= 0 || sep >= decoded.length - 1) return null;
+  const ctime = Number(decoded.slice(0, sep));
+  const uid = decoded.slice(sep + 1).trim();
+  if (!Number.isFinite(ctime) || ctime < 0 || !uid) return null;
+
+  return {
+    token: raw,
+    ctime: Math.floor(ctime),
+    uid,
+  };
+}
+
+function parseCursor(searchParams) {
+  const raw = String(searchParams.get('cursor') || '').trim();
+  if (!raw) return null;
+
+  const point = decodeCursorToken(raw);
+  if (!point) throw new Error('invalid_cursor');
+  return point;
+}
+
+function isAfterCursor(item, cursorPoint) {
+  if (!item || !cursorPoint) return true;
+  const leftTime = Number(item.ctime) || 0;
+  const rightTime = Number(cursorPoint.ctime) || 0;
+  if (leftTime !== rightTime) return leftTime > rightTime;
+  return String(item.uid || '') > String(cursorPoint.uid || '');
 }
 
 function clampNumber(input, min, max) {
@@ -797,6 +1331,528 @@ function listAiProviders() {
   };
 }
 
+function normalizeDeviceToken(raw) {
+  const token = String(raw || '')
+    .trim()
+    .replace(/[^0-9a-f]/gi, '')
+    .toLowerCase();
+  if (token.length < 32) return '';
+  return token;
+}
+
+function normalizeKeywordList(raw) {
+  const input = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const item of input) {
+    const keyword = String(item || '').trim().toLowerCase();
+    if (!keyword || seen.has(keyword)) continue;
+    seen.add(keyword);
+    out.push(keyword.slice(0, 48));
+    if (out.length >= 80) break;
+  }
+
+  return out;
+}
+
+function normalizeSourceList(raw) {
+  const input = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+
+  for (const item of input) {
+    const source = String(item || '').trim().toLowerCase();
+    if (!source || seen.has(source)) continue;
+    if (!ALLOWED_SOURCE_SET.has(source)) continue;
+    seen.add(source);
+    out.push(source);
+  }
+
+  return out;
+}
+
+function maskToken(token) {
+  const raw = String(token || '');
+  if (raw.length <= 10) return raw;
+  return `${raw.slice(0, 6)}...${raw.slice(-4)}`;
+}
+
+function upsertDeviceRegistration(body, accountId = '') {
+  const deviceToken = normalizeDeviceToken(body && body.deviceToken);
+  if (!deviceToken) throw new Error('invalid_device_token');
+
+  const keywords = normalizeKeywordList(body && body.keywords);
+  const sources = normalizeSourceList(body && body.sources);
+  const now = new Date().toISOString();
+  const current = deviceRegistry.get(deviceToken);
+  const pushPolicyInput = body && typeof body.pushPolicy === 'object' ? body.pushPolicy : {};
+  const fallbackSources = sources.length ? sources : SOURCE_TASKS.map((x) => x.source);
+  const pushPolicy = sanitizePushPolicy({
+    ...pushPolicyInput,
+    sources: Array.isArray(pushPolicyInput.sources) ? pushPolicyInput.sources : fallbackSources,
+  });
+
+  const record = {
+    deviceToken,
+    platform: String((body && body.platform) || 'ios').trim().toLowerCase() || 'ios',
+    bundleId: String((body && body.bundleId) || '').trim().slice(0, 120),
+    appVersion: String((body && body.appVersion) || '').trim().slice(0, 40),
+    pushEnabled: Boolean(body && body.pushEnabled),
+    keywords,
+    sources,
+    accountId: String(accountId || '').trim().slice(0, 80),
+    pushPolicy,
+    pushHistory: Array.isArray(current && current.pushHistory) ? current.pushHistory.slice(-300) : [],
+    updatedAt: now,
+    createdAt: (current && current.createdAt) || now,
+  };
+
+  deviceRegistry.set(deviceToken, record);
+  persistDeviceRegistry();
+  return {
+    created: !current,
+    record,
+  };
+}
+
+function removeDeviceRegistration(body) {
+  const deviceToken = normalizeDeviceToken(body && body.deviceToken);
+  if (!deviceToken) throw new Error('invalid_device_token');
+  const removed = deviceRegistry.delete(deviceToken);
+  if (removed) {
+    persistDeviceRegistry();
+  }
+  return removed;
+}
+
+function listRegisteredDevices() {
+  return Array.from(deviceRegistry.values()).map((x) => ({
+    token: maskToken(x.deviceToken),
+    accountId: String(x.accountId || ''),
+    platform: x.platform,
+    bundleId: x.bundleId,
+    appVersion: x.appVersion,
+    pushEnabled: x.pushEnabled,
+    keywordCount: Array.isArray(x.keywords) ? x.keywords.length : 0,
+    sourceCount: Array.isArray(x.sources) ? x.sources.length : 0,
+    pushMode: x.pushPolicy && x.pushPolicy.mode ? x.pushPolicy.mode : 'all',
+    tradingHoursOnly: Boolean(x.pushPolicy && x.pushPolicy.tradingHoursOnly),
+    dndEnabled: Boolean(x.pushPolicy && x.pushPolicy.dndEnabled),
+    rateLimitPerHour: Number((x.pushPolicy && x.pushPolicy.rateLimitPerHour) || 8),
+    pushHistory1h: Array.isArray(x.pushHistory)
+      ? x.pushHistory.filter((ts) => Number(ts) > Date.now() - 60 * 60 * 1000).length
+      : 0,
+    updatedAt: x.updatedAt,
+    createdAt: x.createdAt,
+  }));
+}
+
+function buildSilentPushTargets(items) {
+  if (!Array.isArray(items) || !items.length) return [];
+  const out = [];
+  const now = new Date();
+  const nowMs = Date.now();
+  const currentMinute = now.getHours() * 60 + now.getMinutes();
+  const day = now.getDay(); // 0 Sun, 6 Sat
+  const isWeekday = day >= 1 && day <= 5;
+  const inTradingHours =
+    isWeekday &&
+    ((currentMinute >= 9 * 60 + 30 && currentMinute <= 11 * 60 + 30) ||
+      (currentMinute >= 13 * 60 && currentMinute <= 15 * 60));
+
+  for (const device of deviceRegistry.values()) {
+    if (!device.pushEnabled) continue;
+
+    const policy = sanitizePushPolicy(device.pushPolicy || {});
+    const interestedSources =
+      Array.isArray(policy.sources) && policy.sources.length
+        ? new Set(policy.sources)
+        : (Array.isArray(device.sources) && device.sources.length ? new Set(device.sources) : null);
+    const keywords = normalizeKeywordList(device.keywords || []);
+    const history = Array.isArray(device.pushHistory)
+      ? device.pushHistory.map((x) => Number(x) || 0).filter((x) => x > 0)
+      : [];
+
+    if (policy.tradingHoursOnly && !inTradingHours) {
+      continue;
+    }
+
+    if (policy.dndEnabled) {
+      const startParts = policy.dndStart.split(':').map((x) => Number(x));
+      const endParts = policy.dndEnd.split(':').map((x) => Number(x));
+      const startMinute = startParts.length === 2 ? startParts[0] * 60 + startParts[1] : 22 * 60 + 30;
+      const endMinute = endParts.length === 2 ? endParts[0] * 60 + endParts[1] : 7 * 60 + 30;
+      const inDnd =
+        startMinute <= endMinute
+          ? currentMinute >= startMinute && currentMinute < endMinute
+          : currentMinute >= startMinute || currentMinute < endMinute;
+      if (inDnd) {
+        continue;
+      }
+    }
+
+    const oneHourAgo = nowMs - 60 * 60 * 1000;
+    const sentInHour = history.filter((ts) => ts >= oneHourAgo).length;
+    if (sentInHour >= policy.rateLimitPerHour) {
+      continue;
+    }
+
+    let matchedCount = 0;
+    let matchedKeywordCount = 0;
+    let hasPriorityHit = false;
+    const matchedSources = new Set();
+    for (const item of items) {
+      if (interestedSources && !interestedSources.has(item.source)) continue;
+      const haystack = `${item.title || ''} ${item.text || ''}`.toLowerCase();
+      const keywordHit = keywords.some((k) => k && haystack.includes(k));
+      const level = String(item && item.level ? item.level : '').trim().toUpperCase();
+      const priorityHit = level === 'A' || level === 'B';
+
+      let accepted = false;
+      if (policy.mode === 'keywordsOnly') {
+        accepted = keywordHit;
+      } else if (policy.mode === 'highPriorityOnly') {
+        accepted = priorityHit;
+      } else {
+        accepted = true;
+      }
+
+      if (accepted) {
+        matchedCount += 1;
+        if (keywordHit) matchedKeywordCount += 1;
+        if (priorityHit) hasPriorityHit = true;
+        if (item.source) matchedSources.add(String(item.source));
+      }
+    }
+
+    if (matchedCount > 0) {
+      out.push({
+        deviceToken: device.deviceToken,
+        reason: 'keyword_or_source_match',
+        matchedCount,
+        matchedKeywordCount,
+        hasPriorityHit,
+        matchedSources: Array.from(matchedSources),
+        policy: {
+          mode: policy.mode,
+          tradingHoursOnly: policy.tradingHoursOnly,
+          dndEnabled: policy.dndEnabled,
+          rateLimitPerHour: policy.rateLimitPerHour,
+        },
+      });
+    }
+  }
+
+  return out;
+}
+
+function appendSilentPushAudit(entry) {
+  silentPushAudit.push(entry);
+  if (silentPushAudit.length > 200) {
+    silentPushAudit.splice(0, silentPushAudit.length - 200);
+  }
+  persistPushAudit();
+}
+
+function base64Url(input) {
+  const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input || ''), 'utf8');
+  return buf
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function resolveApnsPrivateKey() {
+  if (apnsConfig.keyBase64) {
+    try {
+      return Buffer.from(apnsConfig.keyBase64, 'base64').toString('utf8');
+    } catch (_) {
+      return '';
+    }
+  }
+  if (apnsConfig.keyPath) {
+    try {
+      return fs.readFileSync(apnsConfig.keyPath, 'utf8');
+    } catch (_) {
+      return '';
+    }
+  }
+  return '';
+}
+
+function apnsConfigStatus() {
+  const privateKey = resolveApnsPrivateKey();
+  return {
+    configured: Boolean(apnsConfig.teamId && apnsConfig.keyId && apnsConfig.bundleId && privateKey),
+    endpoint: apnsConfig.useProduction ? 'production' : 'sandbox',
+    teamIdSet: Boolean(apnsConfig.teamId),
+    keyIdSet: Boolean(apnsConfig.keyId),
+    bundleIdSet: Boolean(apnsConfig.bundleId),
+    keyMaterialSet: Boolean(privateKey),
+    keyPathSet: Boolean(apnsConfig.keyPath),
+    maxConcurrency: apnsConfig.maxConcurrency,
+    timeoutMs: apnsConfig.timeoutMs,
+  };
+}
+
+function createApnsJWT() {
+  const now = Date.now();
+  const privateKey = resolveApnsPrivateKey();
+  const fingerprint = `${apnsConfig.teamId}|${apnsConfig.keyId}|${privateKey.slice(0, 32)}`;
+  if (apnsJwtCache.token && apnsJwtCache.expireAt > now + 30 * 1000 && apnsJwtCache.keyFingerprint === fingerprint) {
+    return apnsJwtCache.token;
+  }
+
+  if (!apnsConfig.teamId || !apnsConfig.keyId || !privateKey) {
+    throw new Error('apns_config_missing');
+  }
+
+  const iat = Math.floor(now / 1000);
+  const header = base64Url(JSON.stringify({ alg: 'ES256', kid: apnsConfig.keyId, typ: 'JWT' }));
+  const payload = base64Url(JSON.stringify({ iss: apnsConfig.teamId, iat }));
+  const unsigned = `${header}.${payload}`;
+  const signature = crypto.sign('sha256', Buffer.from(unsigned), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  });
+  const token = `${unsigned}.${base64Url(signature)}`;
+
+  apnsJwtCache.token = token;
+  apnsJwtCache.expireAt = now + apnsConfig.tokenTtlSec * 1000;
+  apnsJwtCache.keyFingerprint = fingerprint;
+  return token;
+}
+
+function mapWithConcurrency(items, limit, worker) {
+  return new Promise((resolve) => {
+    const list = Array.isArray(items) ? items : [];
+    const size = Math.max(1, Number(limit) || 1);
+    const out = new Array(list.length);
+    let next = 0;
+    let active = 0;
+
+    const launch = () => {
+      while (active < size && next < list.length) {
+        const idx = next++;
+        active += 1;
+        Promise.resolve(worker(list[idx], idx))
+          .then((value) => {
+            out[idx] = value;
+          })
+          .catch((error) => {
+            out[idx] = { ok: false, error: error && error.message ? error.message : 'worker_failed' };
+          })
+          .finally(() => {
+            active -= 1;
+            if (next >= list.length && active === 0) {
+              resolve(out);
+              return;
+            }
+            launch();
+          });
+      }
+    };
+
+    if (!list.length) {
+      resolve([]);
+      return;
+    }
+    launch();
+  });
+}
+
+function sendApnsRequest(session, options) {
+  return new Promise((resolve) => {
+    const {
+      deviceToken,
+      jwt,
+      payload,
+      topic,
+      collapseId,
+      timeoutMs,
+    } = options || {};
+
+    const headers = {
+      ':method': 'POST',
+      ':path': `/3/device/${deviceToken}`,
+      authorization: `bearer ${jwt}`,
+      'apns-topic': topic,
+      'apns-push-type': 'background',
+      'apns-priority': '5',
+      'apns-expiration': '0',
+    };
+    if (collapseId) {
+      headers['apns-collapse-id'] = collapseId;
+    }
+
+    const req = session.request(headers);
+    let responseStatus = 0;
+    let responseHeaders = null;
+    let responseBody = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { req.close(); } catch (_) {}
+      resolve({
+        ok: false,
+        status: 0,
+        reason: 'timeout',
+        apnsId: '',
+      });
+    }, Math.max(1500, timeoutMs || 8000));
+
+    req.setEncoding('utf8');
+    req.on('response', (headersResp) => {
+      responseHeaders = headersResp;
+      responseStatus = Number(headersResp[':status']) || 0;
+    });
+    req.on('data', (chunk) => {
+      responseBody += String(chunk || '');
+      if (responseBody.length > 2000) {
+        responseBody = responseBody.slice(0, 2000);
+      }
+    });
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        status: responseStatus || 0,
+        reason: err && err.message ? err.message : 'request_error',
+        apnsId: '',
+      });
+    });
+    req.on('end', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      let body = {};
+      try {
+        body = responseBody ? JSON.parse(responseBody) : {};
+      } catch (_) {
+        body = {};
+      }
+      const apnsId = String((responseHeaders && responseHeaders['apns-id']) || '').trim();
+      const reason = String((body && body.reason) || '').trim();
+      resolve({
+        ok: responseStatus >= 200 && responseStatus < 300,
+        status: responseStatus,
+        reason: reason || (responseStatus >= 200 && responseStatus < 300 ? '' : 'apns_failed'),
+        apnsId,
+      });
+    });
+
+    try {
+      req.end(JSON.stringify(payload || {}));
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve({
+          ok: false,
+          status: responseStatus || 0,
+          reason: err && err.message ? err.message : 'write_failed',
+          apnsId: '',
+        });
+      }
+    }
+  });
+}
+
+async function dispatchSilentPush(targets, options = {}) {
+  const list = Array.isArray(targets) ? targets : [];
+  if (!list.length) {
+    return { sent: 0, success: 0, failed: 0, results: [] };
+  }
+
+  const status = apnsConfigStatus();
+  if (!status.configured) {
+    throw new Error('apns_config_missing');
+  }
+
+  const jwt = createApnsJWT();
+  const host = apnsConfig.useProduction ? 'https://api.push.apple.com' : 'https://api.sandbox.push.apple.com';
+  const session = http2.connect(host);
+  const collapseBase = String((options && options.reason) || 'telegraph').trim().slice(0, 40) || 'telegraph';
+  const topic = apnsConfig.bundleId;
+  const payload = {
+    aps: {
+      'content-available': 1,
+    },
+    reason: String((options && options.reason) || 'manual').slice(0, 80),
+    fetchedAt: new Date().toISOString(),
+  };
+
+  const results = [];
+  let sessionError = null;
+  session.on('error', (err) => {
+    sessionError = err;
+  });
+
+  try {
+    const parallel = await mapWithConcurrency(list, apnsConfig.maxConcurrency, async (target, index) => {
+      const response = await sendApnsRequest(session, {
+        deviceToken: target.deviceToken,
+        jwt,
+        payload,
+        topic,
+        collapseId: `${collapseBase}-${index % 9}`,
+        timeoutMs: apnsConfig.timeoutMs,
+      });
+
+      if (response.ok) {
+        const current = deviceRegistry.get(target.deviceToken);
+        if (current) {
+          const history = Array.isArray(current.pushHistory) ? current.pushHistory.slice(-300) : [];
+          history.push(Date.now());
+          current.pushHistory = history.slice(-300);
+        }
+      }
+
+      if (!response.ok && ['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic'].includes(response.reason)) {
+        const removed = deviceRegistry.delete(target.deviceToken);
+        if (removed) {
+          persistDeviceRegistry();
+        }
+      }
+
+      return {
+        token: target.deviceToken,
+        matchedCount: target.matchedCount || 0,
+        ok: response.ok,
+        status: response.status,
+        reason: response.reason || '',
+        apnsId: response.apnsId || '',
+      };
+    });
+    results.push(...parallel);
+    persistDeviceRegistry();
+  } finally {
+    try {
+      session.close();
+    } catch (_) {
+      // ignore close failure
+    }
+  }
+
+  if (sessionError && results.every((x) => !x.ok)) {
+    throw new Error(`apns_session_error:${sessionError.message || 'unknown'}`);
+  }
+
+  const success = results.filter((x) => x.ok).length;
+  const failed = results.length - success;
+  return {
+    sent: results.length,
+    success,
+    failed,
+    results,
+  };
+}
+
 function buildAiCacheKey(input, runtimeConfig) {
   const uid = String((input && input.uid) || '').trim();
   const providerPart = String((runtimeConfig && runtimeConfig.provider) || 'deepseek').trim();
@@ -1248,7 +2304,35 @@ function summarizeSources(sourceResults) {
   });
 }
 
-async function fetchAggregated(limit, selectedSources) {
+function buildTelegraphResponse(basePayload, limit, cursorPoint, cached) {
+  const allItems = Array.isArray(basePayload && basePayload.allItems) ? basePayload.allItems : [];
+  const filtered = cursorPoint ? allItems.filter((item) => isAfterCursor(item, cursorPoint)) : allItems;
+  const visible = filtered.slice(0, limit);
+  const nextCursor =
+    (visible.length && encodeCursor(visible[0].ctime, visible[0].uid)) ||
+    (cursorPoint && cursorPoint.token) ||
+    (allItems.length && encodeCursor(allItems[0].ctime, allItems[0].uid)) ||
+    null;
+
+  return {
+    ok: true,
+    source: 'multi',
+    sourceName: '多源聚合',
+    fetchedAt: basePayload.fetchedAt,
+    count: visible.length,
+    totalCount: allItems.length,
+    items: visible,
+    selectedSources: basePayload.selectedSources,
+    sources: basePayload.sources,
+    dedupe: basePayload.dedupe,
+    cursor: cursorPoint ? cursorPoint.token : null,
+    nextCursor,
+    incremental: Boolean(cursorPoint),
+    cached,
+  };
+}
+
+async function fetchAggregated(limit, selectedSources, cursorPoint = null) {
   const normalizedSources = Array.isArray(selectedSources) && selectedSources.length
     ? SOURCE_TASKS.map((task) => task.source).filter((s) => selectedSources.includes(s))
     : SOURCE_TASKS.map((task) => task.source);
@@ -1257,10 +2341,7 @@ async function fetchAggregated(limit, selectedSources) {
   const cacheKey = `${normalizedSources.join(',')}|${limit}`;
   const now = Date.now();
   if (cache.payload && cache.key === cacheKey && now - cache.ts <= cache.ttlMs) {
-    return {
-      ...cache.payload,
-      cached: true,
-    };
+    return buildTelegraphResponse(cache.payload, limit, cursorPoint, true);
   }
 
   const perSourceLimit = Math.max(20, Math.min(180, Math.ceil(limit * 1.4)));
@@ -1319,12 +2400,8 @@ async function fetchAggregated(limit, selectedSources) {
   const uniqueByFuzzy = dedupeByFuzzyContent(uniqueByTitle, 10 * 60, 0.88);
 
   const payload = {
-    ok: true,
-    source: 'multi',
-    sourceName: '多源聚合',
     fetchedAt: new Date().toISOString(),
-    count: uniqueByFuzzy.length,
-    items: uniqueByFuzzy.slice(0, limit),
+    allItems: uniqueByFuzzy,
     selectedSources: normalizedSources,
     sources: summarizeSources(sourceResults),
     dedupe: {
@@ -1334,15 +2411,17 @@ async function fetchAggregated(limit, selectedSources) {
       afterTitle: uniqueByTitle.length,
       afterFuzzy: uniqueByFuzzy.length,
     },
-    cached: false,
   };
 
   cache.key = cacheKey;
   cache.ts = now;
   cache.payload = payload;
 
-  return payload;
+  return buildTelegraphResponse(payload, limit, cursorPoint, false);
 }
+
+bootstrapRuntimeStores();
+bootstrapAccountStore();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1361,10 +2440,124 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (requestUrl.pathname === '/health') {
+      const pushStatus = apnsConfigStatus();
       sendJson(res, 200, {
         ok: true,
         service: 'telegraph-multi-source-proxy',
         time: new Date().toISOString(),
+        deviceCount: deviceRegistry.size,
+        pushConfigured: pushStatus.configured,
+        pushEndpoint: pushStatus.endpoint,
+        accountCount: accountStore.accounts.size,
+        activeSessions: accountStore.sessions.size,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/phone/request' && method === 'POST') {
+      const body = await readJsonBody(req);
+      const phone = normalizePhone(body && body.phone);
+      if (!phone) {
+        sendJson(res, 400, { ok: false, error: 'invalid_phone' });
+        return;
+      }
+      const issued = issuePhoneCode(phone);
+      sendJson(res, 200, {
+        ok: true,
+        expiresInSec: Math.max(1, Math.floor((issued.expireAt - Date.now()) / 1000)),
+        debugCode: authConfig.debugReturnCode ? issued.code : undefined,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/phone/verify' && method === 'POST') {
+      const body = await readJsonBody(req);
+      try {
+        verifyPhoneCode(body && body.phone, body && body.code);
+      } catch (err) {
+        sendJson(res, 400, {
+          ok: false,
+          error: err && err.message ? err.message : 'verify_failed',
+        });
+        return;
+      }
+
+      const account = upsertPhoneAccount(body && body.phone);
+      const session = createSession(account, {
+        deviceId: body && body.deviceId,
+        deviceName: body && body.deviceName,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        session: buildSessionResponse(session, account),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/apple' && method === 'POST') {
+      const body = await readJsonBody(req);
+      const appleUserId = String((body && body.appleUserId) || '').trim();
+      if (!appleUserId) {
+        sendJson(res, 400, { ok: false, error: 'invalid_apple_user' });
+        return;
+      }
+
+      const account = upsertAppleAccount(appleUserId);
+      const session = createSession(account, {
+        deviceId: body && body.deviceId,
+        deviceName: body && body.deviceName,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        session: buildSessionResponse(session, account),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/logout' && method === 'POST') {
+      const auth = String(req.headers.authorization || '').trim();
+      const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+      if (token) {
+        accountStore.sessions.delete(token);
+        persistAccountStore();
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/account/me' && method === 'GET') {
+      const resolved = requireSession(req, res);
+      if (!resolved) return;
+      sendJson(res, 200, {
+        ok: true,
+        account: buildAccountProfile(resolved.account),
+        expiresAt: new Date(resolved.session.expireAt).toISOString(),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/account/sync/pull' && method === 'GET') {
+      const resolved = requireSession(req, res);
+      if (!resolved) return;
+      const cloudState = sanitizeCloudState(resolved.account.cloudState || {});
+      sendJson(res, 200, {
+        ok: true,
+        cloudState,
+        serverUpdatedAt: resolved.account.updatedAt || nowISO(),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/account/sync/push' && method === 'POST') {
+      const resolved = requireSession(req, res);
+      if (!resolved) return;
+      const body = await readJsonBody(req);
+      const payload = body && typeof body.cloudState === 'object' ? body.cloudState : {};
+      const cloudState = updateAccountCloudState(resolved.account, payload);
+      sendJson(res, 200, {
+        ok: true,
+        cloudState,
+        serverUpdatedAt: resolved.account.updatedAt || nowISO(),
       });
       return;
     }
@@ -1378,8 +2571,169 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { ok: false, error: 'invalid_sources' });
         return;
       }
-      const data = await fetchAggregated(limit, selectedSources);
+      let cursorPoint = null;
+      try {
+        cursorPoint = parseCursor(requestUrl.searchParams);
+      } catch (_) {
+        sendJson(res, 400, { ok: false, error: 'invalid_cursor' });
+        return;
+      }
+
+      const data = await fetchAggregated(limit, selectedSources, cursorPoint);
       sendJson(res, 200, data);
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/device/register' && method === 'POST') {
+      const body = await readJsonBody(req);
+      let result;
+      try {
+        const resolved = resolveSession(req);
+        const accountId = resolved && resolved.account ? resolved.account.id : '';
+        result = upsertDeviceRegistration(body, accountId);
+      } catch (err) {
+        sendJson(res, 400, {
+          ok: false,
+          error: err && err.message ? err.message : 'bad_request',
+        });
+        return;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        created: result.created,
+        deviceCount: deviceRegistry.size,
+        updatedAt: result.record.updatedAt,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/device/unregister' && method === 'POST') {
+      const body = await readJsonBody(req);
+      let removed = false;
+      try {
+        removed = removeDeviceRegistration(body);
+      } catch (err) {
+        sendJson(res, 400, {
+          ok: false,
+          error: err && err.message ? err.message : 'bad_request',
+        });
+        return;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        removed,
+        deviceCount: deviceRegistry.size,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/device/list' && method === 'GET') {
+      sendJson(res, 200, {
+        ok: true,
+        count: deviceRegistry.size,
+        devices: listRegisteredDevices(),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/push/config' && method === 'GET') {
+      const status = apnsConfigStatus();
+      sendJson(res, 200, {
+        ok: true,
+        ...status,
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/push/audit' && method === 'GET') {
+      const limit = clampNumber(requestUrl.searchParams.get('limit') || 40, 1, 200);
+      sendJson(res, 200, {
+        ok: true,
+        count: silentPushAudit.length,
+        records: silentPushAudit.slice(-limit),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/push/silent/send' && method === 'POST') {
+      const body = await readJsonBody(req);
+      const reason = String((body && body.reason) || 'manual').trim().slice(0, 80) || 'manual';
+      const sourceItems =
+        body && Array.isArray(body.items) && body.items.length
+          ? body.items
+          : ((cache.payload && cache.payload.allItems) || []).slice(0, 80);
+      const targets = buildSilentPushTargets(sourceItems);
+      const dryRun = parseBoolean(
+        body && Object.prototype.hasOwnProperty.call(body, 'dryRun') ? body.dryRun : requestUrl.searchParams.get('dryRun'),
+        true
+      );
+
+      let dispatchResult = null;
+      let dispatchError = '';
+      if (!dryRun && targets.length > 0) {
+        try {
+          dispatchResult = await dispatchSilentPush(targets, { reason });
+        } catch (err) {
+          dispatchError = err && err.message ? err.message : 'dispatch_failed';
+        }
+      }
+
+      appendSilentPushAudit({
+        at: new Date().toISOString(),
+        reason,
+        targetCount: targets.length,
+        deviceCount: deviceRegistry.size,
+        dryRun,
+        sent: dispatchResult ? dispatchResult.sent : 0,
+        success: dispatchResult ? dispatchResult.success : 0,
+        failed: dispatchResult ? dispatchResult.failed : (dryRun ? 0 : targets.length),
+        error: dispatchError || '',
+      });
+
+      if (dispatchError) {
+        sendJson(res, 502, {
+          ok: false,
+          dryRun,
+          reason,
+          targetCount: targets.length,
+          error: dispatchError,
+          config: apnsConfigStatus(),
+          recent: silentPushAudit.slice(-20),
+        });
+        return;
+      }
+
+      sendJson(res, 200, {
+        ok: true,
+        dryRun,
+        reason,
+        targetCount: targets.length,
+        targets: targets.map((x) => ({
+          token: maskToken(x.deviceToken),
+          matchedCount: x.matchedCount,
+          matchedKeywordCount: x.matchedKeywordCount,
+          hasPriorityHit: x.hasPriorityHit,
+          matchedSources: x.matchedSources,
+          policy: x.policy,
+        })),
+        sent: dispatchResult ? dispatchResult.sent : 0,
+        success: dispatchResult ? dispatchResult.success : 0,
+        failed: dispatchResult ? dispatchResult.failed : 0,
+        delivery: dispatchResult
+          ? dispatchResult.results.map((row) => ({
+              token: maskToken(row.token),
+              ok: row.ok,
+              status: row.status,
+              reason: row.reason,
+              apnsId: row.apnsId,
+              matchedCount: row.matchedCount,
+            }))
+          : [],
+        config: apnsConfigStatus(),
+        recent: silentPushAudit.slice(-20),
+      });
       return;
     }
 

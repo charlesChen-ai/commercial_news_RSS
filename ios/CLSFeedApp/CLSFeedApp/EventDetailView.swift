@@ -24,15 +24,18 @@ struct EventDetailView: View {
 
                 TelegraphCardView(
                     item: cluster.primary,
-                    workflow: viewModel.workflowState(for: cluster.primary),
                     quotes: viewModel.quotes(for: cluster),
                     analysis: viewModel.analysisByUID[cluster.primary.uid],
                     isAnalyzing: viewModel.analyzingUIDs.contains(cluster.primary.uid),
-                    onAnalyze: { Task { await viewModel.analyze(item: cluster.primary, settings: settings) } },
-                    onTogglePinned: { viewModel.togglePinned(uid: cluster.primary.uid) },
-                    onToggleStarred: { viewModel.toggleStarred(uid: cluster.primary.uid) },
-                    onToggleReadLater: { viewModel.toggleReadLater(uid: cluster.primary.uid) },
-                    onToggleRead: { viewModel.toggleRead(uid: cluster.primary.uid) }
+                    highlightKeywords: [],
+                    isStarred: viewModel.workflowState(for: cluster.primary).isStarred,
+                    onToggleStarred: nil,
+                    onMarkRead: nil,
+                    onMuteSource24h: nil,
+                    onMuteSource7d: nil,
+                    onAddKeyword: nil,
+                    keywordSuggestion: nil,
+                    onAnalyze: { Task { await viewModel.analyze(item: cluster.primary, settings: settings) } }
                 )
 
                 timelineCard

@@ -55,16 +55,21 @@ final class APIClient {
         session = URLSession(configuration: config)
     }
 
-    func fetchTelegraph(baseURL: String, limit: Int, sources: [NewsSource]) async throws -> TelegraphResponse {
+    func fetchTelegraph(baseURL: String, limit: Int, sources: [NewsSource], cursor: String? = nil) async throws -> TelegraphResponse {
         if isLocalMode(baseURL: baseURL) {
-            return try await localAggregator.fetch(limit: limit, sources: sources)
+            return try await localAggregator.fetch(limit: limit, sources: sources, cursor: cursor)
         }
 
         let requestURL = try buildURL(baseURL: baseURL, path: "/api/telegraph") { components in
-            components.queryItems = [
+            var queryItems: [URLQueryItem] = [
                 URLQueryItem(name: "limit", value: String(limit)),
                 URLQueryItem(name: "sources", value: sources.map(\.rawValue).joined(separator: ","))
             ]
+            let normalizedCursor = cursor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !normalizedCursor.isEmpty {
+                queryItems.append(URLQueryItem(name: "cursor", value: normalizedCursor))
+            }
+            components.queryItems = queryItems
         }
 
         let (data, response) = try await session.data(from: requestURL)
@@ -74,6 +79,208 @@ final class APIClient {
             throw APIClientError.badServerResponse("服务端返回失败")
         }
         return result
+    }
+
+    func requestPhoneCode(baseURL: String, phone: String) async throws -> PhoneCodeRequestResponse {
+        if isLocalMode(baseURL: baseURL) {
+            throw APIClientError.badServerResponse("本地模式不支持账号登录")
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/auth/phone/request")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let authToken = KeychainHelper.read(key: "account.authToken").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !authToken.isEmpty {
+            request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["phone": phone])
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+        let result = try decoder.decode(PhoneCodeRequestResponse.self, from: data)
+        if !result.ok {
+            throw APIClientError.badServerResponse(result.error ?? "验证码发送失败")
+        }
+        return result
+    }
+
+    func verifyPhoneCode(
+        baseURL: String,
+        phone: String,
+        code: String,
+        deviceID: String,
+        deviceName: String
+    ) async throws -> AccountSessionInfo {
+        if isLocalMode(baseURL: baseURL) {
+            throw APIClientError.badServerResponse("本地模式不支持账号登录")
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/auth/phone/verify")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "phone": phone,
+            "code": code,
+            "deviceId": deviceID,
+            "deviceName": deviceName
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+        let result = try decoder.decode(AuthSessionResponse.self, from: data)
+        guard result.ok, let session = result.session else {
+            throw APIClientError.badServerResponse(result.error ?? "登录失败")
+        }
+        return session
+    }
+
+    func loginWithApple(
+        baseURL: String,
+        appleUserID: String,
+        email: String?,
+        fullName: String?,
+        deviceID: String,
+        deviceName: String
+    ) async throws -> AccountSessionInfo {
+        if isLocalMode(baseURL: baseURL) {
+            throw APIClientError.badServerResponse("本地模式不支持账号登录")
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/auth/apple")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = [
+            "appleUserId": appleUserID,
+            "email": email ?? "",
+            "fullName": fullName ?? "",
+            "deviceId": deviceID,
+            "deviceName": deviceName
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+        let result = try decoder.decode(AuthSessionResponse.self, from: data)
+        guard result.ok, let session = result.session else {
+            throw APIClientError.badServerResponse(result.error ?? "Apple 登录失败")
+        }
+        return session
+    }
+
+    func logout(baseURL: String, token: String) async throws {
+        if isLocalMode(baseURL: baseURL) {
+            return
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/auth/logout")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Data("{}".utf8)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+    }
+
+    func pullCloudState(baseURL: String, token: String) async throws -> AccountCloudState {
+        if isLocalMode(baseURL: baseURL) {
+            throw APIClientError.badServerResponse("本地模式不支持云同步")
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/account/sync/pull")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+        let result = try decoder.decode(AccountCloudStateResponse.self, from: data)
+        guard result.ok, let state = result.cloudState else {
+            throw APIClientError.badServerResponse(result.error ?? "云端数据读取失败")
+        }
+        return state
+    }
+
+    func pushCloudState(baseURL: String, token: String, state: AccountCloudState) async throws -> AccountCloudState {
+        if isLocalMode(baseURL: baseURL) {
+            throw APIClientError.badServerResponse("本地模式不支持云同步")
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/account/sync/push")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(["cloudState": state])
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+        let result = try decoder.decode(AccountCloudStateResponse.self, from: data)
+        guard result.ok, let cloudState = result.cloudState else {
+            throw APIClientError.badServerResponse(result.error ?? "云端数据保存失败")
+        }
+        return cloudState
+    }
+
+    func registerDeviceToken(baseURL: String, token: String, snapshot: AppBackgroundSettingsSnapshot) async throws {
+        if isLocalMode(baseURL: baseURL) {
+            return
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/device/register")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let bundleId = Bundle.main.bundleIdentifier ?? ""
+        let appVersion = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? ""
+        let payload: [String: Any] = [
+            "deviceToken": token,
+            "platform": "ios",
+            "bundleId": bundleId,
+            "appVersion": appVersion,
+            "keywords": snapshot.keywordList,
+            "sources": snapshot.selectedSources.map(\.rawValue),
+            "pushEnabled": snapshot.keywordAlertEnabled,
+            "pushPolicy": [
+                "mode": snapshot.pushStrategy.deliveryMode.rawValue,
+                "tradingHoursOnly": snapshot.pushStrategy.tradingHoursOnly,
+                "dndEnabled": snapshot.pushStrategy.doNotDisturbEnabled,
+                "dndStart": snapshot.pushStrategy.doNotDisturbStart,
+                "dndEnd": snapshot.pushStrategy.doNotDisturbEnd,
+                "rateLimitPerHour": snapshot.pushStrategy.rateLimitPerHour,
+                "sources": snapshot.pushStrategy.sourceCodes
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
+    }
+
+    func unregisterDeviceToken(baseURL: String, token: String) async throws {
+        if isLocalMode(baseURL: baseURL) {
+            return
+        }
+
+        let requestURL = try buildURL(baseURL: baseURL, path: "/api/device/unregister")
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let authToken = KeychainHelper.read(key: "account.authToken").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !authToken.isEmpty {
+            request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        let payload: [String: Any] = ["deviceToken": token]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await session.data(for: request)
+        try validateHTTP(response: response, data: data)
     }
 
     func analyze(baseURL: String, item: TelegraphItem, ai: AIConfigSnapshot) async throws -> AIAnalysis {

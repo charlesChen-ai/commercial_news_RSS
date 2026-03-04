@@ -43,6 +43,7 @@ struct FeedPersistedState {
     var analysisByUID: [String: AIAnalysis]
     var recapByDay: [String: String]
     var lastSuccessAt: Date?
+    var latestCursor: String?
 }
 
 final class FeedPersistenceStore {
@@ -54,6 +55,7 @@ final class FeedPersistenceStore {
         case analysisCache = "analysisCache"
         case recapCache = "recapCache"
         case lastSuccessAt = "lastSuccessAt"
+        case latestCursor = "latestCursor"
     }
 
     private enum LegacyKeys {
@@ -82,6 +84,7 @@ final class FeedPersistenceStore {
 
         let ts = (defaults.object(forKey: namespaced(.lastSuccessAt)) as? Double) ?? legacyTimestamp(for: .lastSuccessAt)
         let lastSuccessAt = (ts != nil && (ts ?? 0) > 0) ? Date(timeIntervalSince1970: ts ?? 0) : nil
+        let latestCursor = defaults.string(forKey: namespaced(.latestCursor))
 
         migrateLegacyIfNeeded(
             filter: filter,
@@ -101,7 +104,8 @@ final class FeedPersistenceStore {
             latestItems: items,
             analysisByUID: analysis,
             recapByDay: recap,
-            lastSuccessAt: lastSuccessAt
+            lastSuccessAt: lastSuccessAt,
+            latestCursor: latestCursor
         )
     }
 
@@ -118,6 +122,11 @@ final class FeedPersistenceStore {
 
     func saveLatestItems(_ items: [TelegraphItem], limit: Int = 260) {
         encode(Array(items.prefix(limit)), forKey: namespaced(.latestItems))
+        NotificationCenter.default.post(
+            name: .feedSnapshotDidUpdate,
+            object: nil,
+            userInfo: ["scope": scope]
+        )
     }
 
     @discardableResult
@@ -146,6 +155,24 @@ final class FeedPersistenceStore {
 
     func saveLastSuccess(_ date: Date?) {
         defaults.set(date?.timeIntervalSince1970, forKey: namespaced(.lastSuccessAt))
+    }
+
+    func saveCursor(_ cursor: String?) {
+        let normalized = cursor?.trimmingCharacters(in: .whitespacesAndNewlines)
+        defaults.set((normalized?.isEmpty == false) ? normalized : nil, forKey: namespaced(.latestCursor))
+    }
+
+    func exportCloudState() -> (starredUIDs: [String], readUIDs: [String]) {
+        let starred = Array(loadUIDSet(.starred)).sorted()
+        let read = Array(loadUIDSet(.read)).sorted()
+        return (starred, read)
+    }
+
+    func applyCloudState(starredUIDs: [String], readUIDs: [String]) {
+        let starred = Set(starredUIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        let read = Set(readUIDs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        _ = saveUIDSet(starred, bucket: .starred, limit: 2400)
+        _ = saveUIDSet(read, bucket: .read, limit: 2400)
     }
 
     private func namespaced(_ key: Keys) -> String {

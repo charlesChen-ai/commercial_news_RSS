@@ -2,17 +2,23 @@ import SwiftUI
 
 struct TelegraphCardView: View {
     let item: TelegraphItem
-    let workflow: TelegraphWorkflowState
     let quotes: [StockQuote]
     let analysis: AIAnalysis?
     let isAnalyzing: Bool
+    let highlightKeywords: [String]
+    let isStarred: Bool
+    let onToggleStarred: (() -> Void)?
+    let onMarkRead: (() -> Void)?
+    let onMuteSource24h: (() -> Void)?
+    let onMuteSource7d: (() -> Void)?
+    let onAddKeyword: (() -> Void)?
+    let keywordSuggestion: String?
     let onAnalyze: () -> Void
-    let onTogglePinned: () -> Void
-    let onToggleStarred: () -> Void
-    let onToggleReadLater: () -> Void
-    let onToggleRead: () -> Void
 
     @State private var expandText = false
+    private static var highlightCache: [String: AttributedString] = [:]
+    private static let highlightCacheQueue = DispatchQueue(label: "cls.telegraph.highlight.cache")
+    private static let highlightCacheLimit = 3200
 
     private var cleanTitle: String {
         item.displayTitle
@@ -24,6 +30,22 @@ struct TelegraphCardView: View {
 
     private var hasTitle: Bool {
         !cleanTitle.isEmpty
+    }
+
+    private var normalizedHighlightKeywords: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for keyword in highlightKeywords {
+            let normalized = keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.count < 2 { continue }
+            if seen.insert(normalized).inserted {
+                out.append(normalized)
+            }
+            if out.count >= 6 {
+                break
+            }
+        }
+        return out
     }
 
     private var analyzeForegroundColor: Color {
@@ -53,7 +75,40 @@ struct TelegraphCardView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(TwitterTheme.surface)
-        .opacity(workflow.isRead ? 0.95 : 1)
+        .contextMenu {
+            if let onToggleStarred {
+                Button(isStarred ? "取消收藏" : "收藏", systemImage: isStarred ? "star.slash" : "star") {
+                    onToggleStarred()
+                }
+            }
+            if let onMarkRead {
+                Button("标记已读", systemImage: "checkmark.circle") {
+                    onMarkRead()
+                }
+            }
+            if let onMuteSource24h {
+                Button("屏蔽来源 24 小时", systemImage: "speaker.slash") {
+                    onMuteSource24h()
+                }
+            }
+            if let onMuteSource7d {
+                Button("屏蔽来源 7 天", systemImage: "speaker.slash.fill") {
+                    onMuteSource7d()
+                }
+            }
+            if let onAddKeyword {
+                let suggestion = keywordSuggestion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if suggestion.isEmpty {
+                    Button("加入关键词", systemImage: "plus.circle") {
+                        onAddKeyword()
+                    }
+                } else {
+                    Button("加入关键词：\(suggestion)", systemImage: "plus.circle") {
+                        onAddKeyword()
+                    }
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -74,21 +129,18 @@ struct TelegraphCardView: View {
     @ViewBuilder
     private var contentBlock: some View {
         if hasTitle {
-            Text(cleanTitle)
+            Text(highlighted(cleanTitle, baseColor: .primary, cacheToken: "title.primary"))
                 .font(.headline)
-                .foregroundStyle(.primary)
                 .lineSpacing(2)
 
             if !cleanText.isEmpty {
-                Text(cleanText)
+                Text(highlighted(cleanText, baseColor: .secondary, cacheToken: "text.secondary"))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
                     .lineLimit(expandText ? nil : 4)
             }
         } else if !cleanText.isEmpty {
-            Text(cleanText)
+            Text(highlighted(cleanText, baseColor: .primary, cacheToken: "text.primary"))
                 .font(.headline)
-                .foregroundStyle(.primary)
                 .lineSpacing(2)
                 .lineLimit(expandText ? nil : 5)
         } else {
@@ -142,35 +194,7 @@ struct TelegraphCardView: View {
 
     private var actionRow: some View {
         HStack(spacing: 8) {
-            smallActionButton(
-                icon: workflow.isPinned ? "pin.fill" : "pin",
-                active: workflow.isPinned,
-                tint: .orange,
-                action: onTogglePinned
-            )
-
-            smallActionButton(
-                icon: workflow.isStarred ? "star.fill" : "star",
-                active: workflow.isStarred,
-                tint: .yellow,
-                action: onToggleStarred
-            )
-
-            smallActionButton(
-                icon: workflow.isReadLater ? "clock.fill" : "clock",
-                active: workflow.isReadLater,
-                tint: .blue,
-                action: onToggleReadLater
-            )
-
-            smallActionButton(
-                icon: workflow.isRead ? "eye.fill" : "eye.slash",
-                active: workflow.isRead,
-                tint: .secondary,
-                action: onToggleRead
-            )
-
-            Spacer(minLength: 6)
+            Spacer(minLength: 0)
 
             Button {
                 onAnalyze()
@@ -200,16 +224,6 @@ struct TelegraphCardView: View {
             .disabled(isAnalyzing)
             .opacity(isAnalyzing ? 0.78 : 1)
         }
-    }
-
-    private func smallActionButton(icon: String, active: Bool, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(active ? tint : .secondary)
-                .frame(width: 28, height: 24)
-        }
-        .buttonStyle(.plain)
     }
 
     private func analysisPanel(_ analysis: AIAnalysis) -> some View {
@@ -367,6 +381,48 @@ struct TelegraphCardView: View {
             return .red
         default:
             return .orange
+        }
+    }
+
+    private func highlighted(_ text: String, baseColor: Color, cacheToken: String) -> AttributedString {
+        let keywords = normalizedHighlightKeywords
+        let cacheKey = "\(cacheToken)|\(keywords.joined(separator: "|"))|\(text.hashValue)"
+        if let cached = Self.cachedHighlight(cacheKey) {
+            return cached
+        }
+
+        var output = AttributedString(text)
+        output.foregroundColor = baseColor
+        guard !keywords.isEmpty else { return output }
+
+        let lowered = text.lowercased()
+        for keyword in keywords.sorted(by: { $0.count > $1.count }) {
+            var searchRange = lowered.startIndex..<lowered.endIndex
+            while let found = lowered.range(of: keyword, options: [], range: searchRange) {
+                if let attrRange = Range(found, in: output) {
+                    output[attrRange].foregroundColor = .orange
+                    output[attrRange].backgroundColor = Color.orange.opacity(0.16)
+                }
+                searchRange = found.upperBound..<lowered.endIndex
+            }
+        }
+
+        Self.storeHighlight(output, key: cacheKey)
+        return output
+    }
+
+    private static func cachedHighlight(_ key: String) -> AttributedString? {
+        highlightCacheQueue.sync {
+            highlightCache[key]
+        }
+    }
+
+    private static func storeHighlight(_ value: AttributedString, key: String) {
+        highlightCacheQueue.sync {
+            if highlightCache.count > highlightCacheLimit {
+                highlightCache.removeAll(keepingCapacity: true)
+            }
+            highlightCache[key] = value
         }
     }
 }

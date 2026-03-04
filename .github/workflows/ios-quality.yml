@@ -1,0 +1,23 @@
+name: iOS Quality Gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Swift Typecheck (iOS)
+        run: |
+          set -euo pipefail
+          SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          xcrun swiftc \
+            -typecheck \
+            -module-cache-path /tmp/cls-module-cache \
+            -target arm64-apple-ios16.0-simulator \
+            -sdk "$SDK_PATH" \
+            ios/CLSFeedApp/CLSFeedApp/*.swift

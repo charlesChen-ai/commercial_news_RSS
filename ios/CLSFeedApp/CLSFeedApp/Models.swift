@@ -73,6 +73,45 @@ enum AIProvider: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum PushDeliveryMode: String, CaseIterable, Identifiable, Codable {
+    case all
+    case keywordsOnly
+    case highPriorityOnly
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "全部快讯"
+        case .keywordsOnly:
+            return "只推关键词"
+        case .highPriorityOnly:
+            return "只推高优先级"
+        }
+    }
+}
+
+struct PushStrategySnapshot: Codable, Hashable {
+    var deliveryMode: PushDeliveryMode
+    var tradingHoursOnly: Bool
+    var doNotDisturbEnabled: Bool
+    var doNotDisturbStart: String
+    var doNotDisturbEnd: String
+    var rateLimitPerHour: Int
+    var sourceCodes: [String]
+
+    static let `default` = PushStrategySnapshot(
+        deliveryMode: .all,
+        tradingHoursOnly: false,
+        doNotDisturbEnabled: false,
+        doNotDisturbStart: "22:30",
+        doNotDisturbEnd: "07:30",
+        rateLimitPerHour: 8,
+        sourceCodes: NewsSource.allCases.map(\.rawValue)
+    )
+}
+
 struct TelegraphItem: Codable, Identifiable, Hashable {
     let uid: String
     let source: String
@@ -89,6 +128,40 @@ struct TelegraphItem: Codable, Identifiable, Hashable {
 
     var displayTitle: String {
         title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct TelegraphCursorPoint: Hashable {
+    let ctime: Int
+    let uid: String
+}
+
+enum TelegraphCursor {
+    static func encode(ctime: Int, uid: String) -> String {
+        let raw = "\(max(0, ctime))|\(uid)"
+        return Data(raw.utf8).base64EncodedString()
+    }
+
+    static func decode(_ token: String?) -> TelegraphCursorPoint? {
+        guard let token else { return nil }
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let data = Data(base64Encoded: trimmed),
+              let raw = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let parts = raw.split(separator: "|", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let ctime = Int(parts[0]), !parts[1].isEmpty else {
+            return nil
+        }
+        return TelegraphCursorPoint(ctime: ctime, uid: parts[1])
+    }
+
+    static func isAfter(_ item: TelegraphItem, cursor: TelegraphCursorPoint) -> Bool {
+        if item.ctime != cursor.ctime {
+            return item.ctime > cursor.ctime
+        }
+        return item.uid > cursor.uid
     }
 }
 
@@ -132,6 +205,58 @@ struct KeywordSubscription: Codable, Identifiable, Hashable {
     }
 }
 
+struct AccountProfile: Codable, Hashable {
+    let accountId: String
+    let provider: String
+    let phoneMasked: String?
+    let appleMasked: String?
+    let createdAt: String
+}
+
+struct AccountSessionInfo: Codable, Hashable {
+    let token: String
+    let account: AccountProfile
+    let expiresAt: String
+}
+
+struct AccountCloudState: Codable, Hashable {
+    var starredUIDs: [String]
+    var readUIDs: [String]
+    var keywordSubscriptions: [KeywordSubscription]
+    var selectedSources: [String]
+    var pushStrategy: PushStrategySnapshot
+    var updatedAt: String
+
+    static let empty = AccountCloudState(
+        starredUIDs: [],
+        readUIDs: [],
+        keywordSubscriptions: [],
+        selectedSources: NewsSource.allCases.map(\.rawValue),
+        pushStrategy: .default,
+        updatedAt: ""
+    )
+}
+
+struct PhoneCodeRequestResponse: Decodable {
+    let ok: Bool
+    let expiresInSec: Int?
+    let debugCode: String?
+    let error: String?
+}
+
+struct AuthSessionResponse: Decodable {
+    let ok: Bool
+    let session: AccountSessionInfo?
+    let error: String?
+}
+
+struct AccountCloudStateResponse: Decodable {
+    let ok: Bool
+    let cloudState: AccountCloudState?
+    let serverUpdatedAt: String?
+    let error: String?
+}
+
 struct SourceHealth: Decodable, Hashable {
     let source: String
     let sourceName: String
@@ -146,6 +271,9 @@ struct TelegraphResponse: Decodable {
     let items: [TelegraphItem]
     let sources: [SourceHealth]?
     let selectedSources: [String]?
+    let cursor: String?
+    let nextCursor: String?
+    let incremental: Bool?
 }
 
 struct TelegraphCluster: Identifiable, Hashable {

@@ -31,12 +31,26 @@ private enum AppShellTab: CaseIterable, Identifiable {
             return "slider.horizontal.3"
         }
     }
+
+    var telemetryName: String {
+        switch self {
+        case .home:
+            return "home"
+        case .favorites:
+            return "favorites"
+        case .console:
+            return "console"
+        }
+    }
 }
 
 struct MainTabView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var errorCenter: AppErrorCenter
+    @StateObject private var homeViewModel = FeedViewModel(scope: "home")
+    @StateObject private var favoritesViewModel = FeedViewModel(scope: "favorites")
     @State private var selectedTab: AppShellTab = .home
+    @State private var homeButtonTrigger = 0
 
     init() {
 #if os(iOS)
@@ -124,11 +138,18 @@ struct MainTabView: View {
     private var contentView: some View {
         switch selectedTab {
         case .home:
-            FeedView()
+            FeedView(
+                isActive: true,
+                homeButtonTrigger: homeButtonTrigger,
+                viewModel: homeViewModel
+            )
         case .favorites:
-            FavoritesView()
+            FavoritesView(
+                isActive: true,
+                viewModel: favoritesViewModel
+            )
         case .console:
-            ConsoleView()
+            ConsoleView(isActive: true)
         }
     }
 
@@ -140,7 +161,28 @@ struct MainTabView: View {
             HStack {
                 ForEach(AppShellTab.allCases) { tab in
                     Button {
-                        selectedTab = tab
+                        let started = CFAbsoluteTimeGetCurrent()
+                        if tab == .home {
+                            homeButtonTrigger += 1
+                        }
+
+                        if selectedTab != tab {
+                            selectedTab = tab
+                            AppHaptics.selection()
+                            DispatchQueue.main.async {
+                                let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
+                                AppTelemetryCenter.shared.record(
+                                    name: "tab_switch",
+                                    value: ms,
+                                    meta: ["tab": tab.telemetryName]
+                                )
+                            }
+                            return
+                        }
+
+                        if tab == .home {
+                            AppHaptics.impact()
+                        }
                     } label: {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: selectedTab == tab ? tab.selectedIcon : tab.icon)

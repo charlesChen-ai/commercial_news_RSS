@@ -70,7 +70,7 @@ PORT=8080 node cls-telegraph-proxy.js
 
 健康检查。
 
-### `GET /api/telegraph?limit=120&sources=cls,sina,wscn`
+### `GET /api/telegraph?limit=120&sources=cls,sina,wscn&cursor=...`
 
 返回聚合后的快讯数据。
 
@@ -79,6 +79,7 @@ PORT=8080 node cls-telegraph-proxy.js
 - `limit`：返回数量，范围 `20~500`，默认 `120`
 - `sources`：可选，逗号分隔来源列表；支持 `cls,eastmoney,sina,wscn,ths`
   - 不传时默认全量来源
+- `cursor`：可选，base64 游标；传入后返回“游标之后”的增量数据
 
 主要返回字段：
 
@@ -87,6 +88,96 @@ PORT=8080 node cls-telegraph-proxy.js
 - `sources`：每个来源抓取状态（`ok/count/error`）
 - `dedupe`：去重统计（`before/afterUid/afterStrong/afterTitle/afterFuzzy`）
 - `cached`：是否命中 3 秒短缓存
+- `cursor` / `nextCursor`：本次请求游标与服务端返回的下一游标
+- `incremental`：是否按增量模式返回
+
+### `POST /api/device/register`
+
+注册或更新设备推送配置（供 iOS 端上报 APNs token 与订阅偏好）。
+
+请求体示例：
+
+```json
+{
+  "deviceToken": "hex-token",
+  "platform": "ios",
+  "bundleId": "com.chaos.CLSFeedApp",
+  "appVersion": "1.0.0",
+  "keywords": ["茅台", "AI"],
+  "sources": ["cls", "sina"],
+  "pushEnabled": true
+}
+```
+
+可选 `pushPolicy` 字段（推送策略中心）：
+
+```json
+{
+  "mode": "all|keywordsOnly|highPriorityOnly",
+  "tradingHoursOnly": false,
+  "dndEnabled": false,
+  "dndStart": "22:30",
+  "dndEnd": "07:30",
+  "rateLimitPerHour": 8,
+  "sources": ["cls", "sina"]
+}
+```
+
+### `POST /api/device/unregister`
+
+注销设备推送配置，请求体仅需 `deviceToken`。
+
+### `GET /api/device/list`
+
+返回当前注册设备摘要（token 已脱敏），用于本地调试。
+
+### `POST /api/auth/phone/request`
+
+手机号请求验证码。开发环境默认返回 `debugCode` 便于联调。
+
+### `POST /api/auth/phone/verify`
+
+手机号+验证码登录，返回会话 `token` 与账号信息。
+
+### `POST /api/auth/apple`
+
+Apple 标识登录（服务端当前为本地信任模式，按 `appleUserId` 建立账号）。
+
+### `POST /api/auth/logout`
+
+退出当前会话（Bearer token）。
+
+### `GET /api/account/me`
+
+读取当前账号信息（Bearer token）。
+
+### `GET /api/account/sync/pull`
+
+拉取云端同步数据：收藏、已读、关键词、来源订阅、推送策略（Bearer token）。
+
+### `POST /api/account/sync/push`
+
+上报云端同步数据（Bearer token）。
+
+### `POST /api/push/silent/send`
+
+静默推送接口，默认 `dryRun=true`（只做匹配计算，不调用 APNs）。
+
+请求体可选字段：
+
+- `reason`：触发原因（用于审计）
+- `items`：候选快讯数组（不传则使用最近缓存快讯）
+- `dryRun`：`true/false`，设为 `false` 时会真实调用 APNs
+
+返回包含 `targetCount`、`sent/success/failed`、`delivery`（单设备回执摘要）与 `recent` 审计记录。
+
+### `GET /api/push/config`
+
+返回 APNs 配置是否完整、环境（sandbox/production）与并发/超时参数。
+
+### `GET /api/push/audit?limit=40`
+
+返回最近静默推送审计记录（默认 40，最多 200）。
 
 ### `GET /api/ai/providers`
 
@@ -166,6 +257,19 @@ node --check cls-telegraph-proxy.js
 curl -sS 'http://127.0.0.1:8066/api/telegraph?limit=50'
 ```
 
+APNs 静默推送（真实发送）环境变量：
+
+```bash
+export APNS_TEAM_ID=你的AppleTeamID
+export APNS_KEY_ID=你的APNsKeyID
+export APNS_BUNDLE_ID=com.chaos.CLSFeedApp
+export APNS_P8_PATH=/绝对路径/AuthKey_XXXXXX.p8
+# 或者：
+# export APNS_P8_BASE64=base64编码后的p8内容
+# 可选（默认 false=sandbox）：
+# export APNS_USE_PRODUCTION=true
+```
+
 ## AI Analysis Config (DeepSeek)
 
 `/api/analyze` 默认按 DeepSeek OpenAI-compatible 接口调用：
@@ -194,6 +298,8 @@ export OPENAI_MODEL=deepseek-chat
 
 - Tab1「信息流」：展示聚合快讯流，支持下拉刷新、自动轮询、逐条 AI 分析
 - Tab2「控制台」：配置服务地址、勾选信息源、选择 AI provider、输入 API Key、编辑 API Base 与模型名
+- 控制台「账号与云同步」：支持手机号登录、Apple 登录（iOS）、云端同步收藏/已读/关键词/来源/推送策略
+- 控制台「推送策略中心」：支持关键词模式/高优先级模式、交易时段推送、免打扰、每小时频控、来源细分开关
 
 > API Key 在 iOS 端存于 Keychain，再随分析请求下发给后端。
 

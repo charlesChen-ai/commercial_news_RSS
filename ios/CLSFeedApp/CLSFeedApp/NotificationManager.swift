@@ -4,8 +4,31 @@ import UserNotifications
 @MainActor
 final class NotificationManager {
     static let shared = NotificationManager()
+    static let keywordCategoryID = "app.keywordAlert.category"
 
-    private init() {}
+    private init() {
+        configureFeedbackActions()
+    }
+
+    func configureFeedbackActions() {
+        let tooFrequent = UNNotificationAction(
+            identifier: PushFeedbackActionID.tooFrequent,
+            title: "太频繁",
+            options: []
+        )
+        let notInterested = UNNotificationAction(
+            identifier: PushFeedbackActionID.notInterested,
+            title: "不感兴趣",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: Self.keywordCategoryID,
+            actions: [tooFrequent, notInterested],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+    }
 
     func requestAuthorization() async -> Bool {
         do {
@@ -37,6 +60,7 @@ final class NotificationManager {
 
         content.body = "[\(item.sourceName)] \(headline)"
         content.sound = .default
+        content.categoryIdentifier = Self.keywordCategoryID
         content.userInfo = [
             "uid": item.uid,
             "source": item.source,

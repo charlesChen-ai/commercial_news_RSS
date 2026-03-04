@@ -6,8 +6,9 @@ import UIKit
 struct FeedView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var errorCenter: AppErrorCenter
-    @StateObject private var viewModel = FeedViewModel(scope: "home")
-    @State private var showBackToTop = false
+    let isActive: Bool
+    let homeButtonTrigger: Int
+    @ObservedObject var viewModel: FeedViewModel
     @State private var showRecapSheet = false
     @State private var expandedClusterIDs: Set<String> = []
     @State private var selectedCluster: TelegraphCluster?
@@ -16,6 +17,21 @@ struct FeedView: View {
     @State private var cachedRealtimeClusters: [TelegraphCluster] = []
     @State private var cachedKeywordHitsByUID: [String: [String]] = [:]
     @State private var cachedKeywordHitCount = 0
+    @State private var readingScrollRequest: FeedScrollRequest?
+    @State private var insertedToastCount = 0
+    @State private var showInsertedToast = false
+    @SceneStorage("feed.home.didBootstrap") private var didBootstrap = false
+    @State private var lastHandledHomeButtonTrigger = 0
+
+    init(
+        isActive: Bool = true,
+        homeButtonTrigger: Int = 0,
+        viewModel: FeedViewModel
+    ) {
+        self.isActive = isActive
+        self.homeButtonTrigger = homeButtonTrigger
+        self.viewModel = viewModel
+    }
 
     var body: some View {
         NavigationStack {
@@ -25,144 +41,88 @@ struct FeedView: View {
 
                 VStack(spacing: 0) {
                     topChrome
-
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            Color.clear
-                                .frame(height: 1)
-                                .id("feed_top_anchor")
-                                .background(
-                                    GeometryReader { geo in
-                                        Color.clear.preference(
-                                            key: FeedScrollOffsetKey.self,
-                                            value: geo.frame(in: .named("feed_scroll")).minY
-                                        )
-                                    }
-                                )
-
-                            LazyVStack(spacing: 0) {
-                                if let err = viewModel.feedError, !err.isEmpty {
-                                    errorBanner(err)
-                                        .padding(.bottom, 8)
-                                }
-
-                                if viewModel.pendingAIJobs > 0 {
-                                    retryQueueBanner
-                                        .padding(.bottom, 8)
-                                }
-
-                                if viewModel.displayClusters.isEmpty, !viewModel.isLoading {
-                                    emptyCard
-                                } else {
-                                    topSectionContent
-                                }
-                            }
-                            .padding(.top, 4)
-                            .padding(.bottom, 20)
-                        }
-                        .coordinateSpace(name: "feed_scroll")
-                        .onPreferenceChange(FeedScrollOffsetKey.self) { y in
-                            let shouldShow = y < -420
-                            if shouldShow != showBackToTop {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    showBackToTop = shouldShow
-                                }
-                            }
-                        }
-                        .overlay(alignment: .bottomTrailing) {
-                            if showBackToTop {
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.25)) {
-                                        proxy.scrollTo("feed_top_anchor", anchor: .top)
-                                    }
-                                } label: {
-                                    Image(systemName: "arrow.up")
-                                        .font(.headline.weight(.bold))
-                                        .foregroundStyle(.white)
-                                        .frame(width: 38, height: 38)
-                                        .background(Color.black.opacity(0.7), in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.trailing, 16)
-                                .padding(.bottom, 18)
-                            }
-                        }
-                        .refreshable {
-                            await viewModel.refresh(using: settings)
-                        }
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 18)
-                                .onEnded { value in
-                                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                                    guard abs(value.translation.width) > 26 else { return }
-                                    if value.translation.width < 0 {
-                                        switchTopSection(to: .realtime)
-                                    } else {
-                                        switchTopSection(to: .headline)
-                                    }
-                                }
-                        )
-                    }
+                    topSectionContent
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .task {
-                // Top-right filter menu was removed; force default feed mode to avoid stale persisted filters.
-                viewModel.setFilter(.all)
-
-                if settings.autoRefreshEnabled {
-                    viewModel.startAutoRefresh(using: settings)
-                } else {
-                    await viewModel.refresh(using: settings, trigger: .startup)
+            .task(id: isActive) {
+                await handleActivationChange()
+            }
+            .onChange(of: isActive) { active in
+                if !active {
+                    viewModel.stopAutoRefresh()
                 }
-                recomputeSectionCaches()
             }
             .onDisappear {
                 viewModel.stopAutoRefresh()
             }
+            .onChange(of: homeButtonTrigger) { _ in
+                guard isActive else { return }
+                Task { await handleHomeButtonPressedIfNeeded() }
+            }
             .onChange(of: settings.autoRefreshEnabled) { enabled in
+                guard isActive else {
+                    viewModel.stopAutoRefresh()
+                    return
+                }
                 if enabled {
-                    viewModel.startAutoRefresh(using: settings)
+                    viewModel.startAutoRefresh(using: settings, immediateRefresh: false)
                 } else {
                     viewModel.stopAutoRefresh()
                 }
             }
             .onChange(of: settings.refreshInterval) { _ in
-                guard settings.autoRefreshEnabled else { return }
-                viewModel.startAutoRefresh(using: settings)
+                guard isActive, settings.autoRefreshEnabled else { return }
+                viewModel.startAutoRefresh(using: settings, immediateRefresh: false)
             }
             .onChange(of: viewModel.displayClusters) { _ in
                 recomputeSectionCaches()
             }
+            .onChange(of: viewModel.isLoading) { loading in
+                guard !loading else { return }
+                recomputeSectionCaches()
+            }
             .onChange(of: settings.keywordSubscriptions) { _ in
+                _ = viewModel.syncKeywordHitsToFavorites(using: settings)
                 recomputeSectionCaches()
             }
             .onChange(of: viewModel.filter) { _ in
                 recomputeSectionCaches()
             }
             .onChange(of: settings.selectedSourceCodes) { _ in
+                viewModel.invalidateCursor()
+                guard isActive else { return }
                 if settings.autoRefreshEnabled {
-                    viewModel.startAutoRefresh(using: settings)
+                    viewModel.startAutoRefresh(using: settings, immediateRefresh: true)
                 } else {
                     Task { await viewModel.refresh(using: settings) }
                 }
                 recomputeSectionCaches()
             }
             .onChange(of: settings.serverBaseURL) { _ in
+                viewModel.invalidateCursor()
+                guard isActive else { return }
                 if settings.autoRefreshEnabled {
-                    viewModel.startAutoRefresh(using: settings)
+                    viewModel.startAutoRefresh(using: settings, immediateRefresh: true)
                 } else {
                     Task { await viewModel.refresh(using: settings) }
                 }
                 recomputeSectionCaches()
             }
             .onChange(of: settings.offlineModeEnabled) { _ in
+                viewModel.invalidateCursor()
+                guard isActive else { return }
                 if settings.autoRefreshEnabled {
-                    viewModel.startAutoRefresh(using: settings)
+                    viewModel.startAutoRefresh(using: settings, immediateRefresh: true)
                 } else {
                     Task { await viewModel.refresh(using: settings) }
                 }
                 recomputeSectionCaches()
+            }
+            .onChange(of: settings.sourceMuteUntilByCode) { _ in
+                viewModel.invalidateCursor()
+                guard isActive else { return }
+                Task { await viewModel.refresh(using: settings, trigger: .manual) }
             }
             .onChange(of: settings.aiRetryQueueEnabled) { enabled in
                 guard enabled else { return }
@@ -177,23 +137,13 @@ struct FeedView: View {
                     )
                 }
             }
-            .onChange(of: viewModel.feedError) { value in
-                if let value, !value.isEmpty {
-                    errorCenter.showBanner(
-                        title: "信息流刷新异常",
-                        message: value,
-                        source: "feed.refresh",
-                        level: .warning
-                    )
-                }
-            }
             .sheet(isPresented: $showRecapSheet) {
                 recapSheet
             }
             .sheet(item: $selectedCluster) { cluster in
                 NavigationStack {
-                EventDetailView(viewModel: viewModel, initialCluster: cluster)
-                    .environmentObject(settings)
+                    EventDetailView(viewModel: viewModel, initialCluster: cluster)
+                        .environmentObject(settings)
                 }
             }
         }
@@ -222,7 +172,18 @@ struct FeedView: View {
     }
 
     private var topChrome: some View {
-        topSectionSwitcher
+        VStack(spacing: 0) {
+            Image("BrandMark")
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 30, height: 30)
+                .accessibilityHidden(true)
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+
+            topSectionSwitcher
+        }
         .background(TwitterTheme.surface)
     }
 
@@ -252,7 +213,20 @@ struct FeedView: View {
     private func topSectionButton(_ section: FeedTopSection, title: String) -> some View {
         let selected = topSection == section
         return Button {
-            switchTopSection(to: section)
+            guard topSection != section else { return }
+            let started = CFAbsoluteTimeGetCurrent()
+            AppHaptics.selection()
+            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.9, blendDuration: 0.03)) {
+                topSection = section
+            }
+            DispatchQueue.main.async {
+                let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
+                AppTelemetryCenter.shared.record(
+                    name: "section_switch",
+                    value: ms,
+                    meta: ["section": section.rawValue]
+                )
+            }
         } label: {
             VStack(spacing: 8) {
                 Text(title)
@@ -267,28 +241,150 @@ struct FeedView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
     private var topSectionContent: some View {
-        Group {
-            if topSection == .headline {
-                headlineSectionView
-                    .id("headline_section")
-            } else {
-                realtimeSectionView
-                    .id("realtime_section")
+        TabView(selection: $topSection) {
+            sectionPage(.headline)
+                .tag(FeedTopSection.headline)
+
+            sectionPage(.realtime)
+                .tag(FeedTopSection.realtime)
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.9, blendDuration: 0.03), value: topSection)
+    }
+
+    private func sectionPage(_ section: FeedTopSection) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .id(sectionTopAnchorID(section))
+                    if viewModel.pendingAIJobs > 0 {
+                        retryQueueBanner
+                            .padding(.bottom, 8)
+                    }
+                    sectionView(for: section)
+                }
+                .animation(
+                    viewModel.isApplyingPendingInsertion
+                        ? .interactiveSpring(response: 0.16, dampingFraction: 0.92, blendDuration: 0.02)
+                        : nil,
+                    value: sectionIDsSignature(section)
+                )
+                .padding(.top, 4)
+                .padding(.bottom, 20)
+            }
+            .refreshable {
+                if pendingBadgeCount(for: section) > 0 {
+                    let inserted = await applyPendingNewItems(for: section)
+                    if inserted > 0 {
+                        return
+                    }
+                }
+                await viewModel.refresh(using: settings, trigger: .manual)
+            }
+            .overlay(alignment: .top) {
+                sectionFloatingBanners(section: section)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+            }
+            .onChange(of: readingScrollRequest) { request in
+                guard let request, request.section == section else { return }
+                withAnimation(.interactiveSpring(response: 0.14, dampingFraction: 0.94, blendDuration: 0.01)) {
+                    proxy.scrollTo(request.clusterID, anchor: .top)
+                }
+                readingScrollRequest = nil
             }
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func sectionFloatingBanners(section: FeedTopSection) -> some View {
+        let pendingCount = pendingBadgeCount(for: section)
+        VStack(spacing: 8) {
+            if pendingCount > 0 {
+                Button {
+                    AppHaptics.selection()
+                    Task {
+                        _ = await applyPendingNewItems(for: section)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.caption.weight(.semibold))
+                        Text("新消息 \(pendingCount) 条")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(TwitterTheme.accent, in: Capsule())
+                    .shadow(color: .black.opacity(0.14), radius: 6, x: 0, y: 3)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showInsertedToast {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("已更新 \(insertedToastCount) 条")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.black.opacity(0.72), in: Capsule())
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+    }
+
+    @MainActor
+    private func applyPendingNewItems(for section: FeedTopSection) async -> Int {
+        readingScrollRequest = FeedScrollRequest(
+            section: section,
+            clusterID: sectionTopAnchorID(section)
+        )
+        let inserted = await viewModel.applyPendingNewItems(using: settings)
+        recomputeSectionCaches()
+        readingScrollRequest = FeedScrollRequest(
+            section: section,
+            clusterID: sectionTopAnchorID(section)
+        )
+        guard inserted > 0 else { return 0 }
+        insertedToastCount = inserted
+        showInsertedToast = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.45) {
+            withAnimation(.easeOut(duration: 0.18)) {
+                showInsertedToast = false
+            }
+        }
+        AppHaptics.impact()
+        return inserted
+    }
+
+    @ViewBuilder
+    private func sectionView(for section: FeedTopSection) -> some View {
+        if section == .headline {
+            headlineSectionView
+        } else {
+            realtimeSectionView
+        }
     }
 
     private var headlineSectionView: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             if headlineClusters.isEmpty {
-                Text("当前暂无头条快讯")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 14)
+                if viewModel.isLoading {
+                    skeletonSectionView
+                } else {
+                    Text("当前暂无头条快讯")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                }
             } else {
                 ForEach(headlineClusters) { cluster in
                     clusterCell(
@@ -303,7 +399,7 @@ struct FeedView: View {
     }
 
     private var realtimeSectionView: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 0) {
             if cachedKeywordHitCount > 0 {
                 HStack(spacing: 8) {
                     Image(systemName: "bell.badge.fill")
@@ -321,11 +417,15 @@ struct FeedView: View {
             }
 
             if realtimeClusters.isEmpty {
-                Text("暂无更多实时流内容")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 14)
+                if viewModel.isLoading {
+                    skeletonSectionView
+                } else {
+                    Text("暂无更多实时流内容")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                }
             } else {
                 ForEach(realtimeClusters) { cluster in
                     clusterCell(
@@ -339,10 +439,14 @@ struct FeedView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func switchTopSection(to next: FeedTopSection) {
-        guard next != topSection else { return }
-        withAnimation(.easeOut(duration: 0.14)) {
-            topSection = next
+    private var skeletonSectionView: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<5, id: \.self) { _ in
+                FeedSkeletonCard()
+                    .overlay(alignment: .bottom) {
+                        Divider().overlay(TwitterTheme.divider)
+                    }
+            }
         }
     }
 
@@ -351,13 +455,19 @@ struct FeedView: View {
         let headlineBase = base
             .filter { ["A", "B"].contains($0.primary.level.uppercased()) }
             .prefix(20)
-        cachedHeadlineClusters = Array(headlineBase.prefix(12))
+        let nextHeadline = Array(headlineBase.prefix(12))
+        if !nextHeadline.isEmpty || !viewModel.isLoading {
+            cachedHeadlineClusters = nextHeadline
+        }
 
         let keywords = settings.keywordList
         guard !keywords.isEmpty else {
             cachedKeywordHitsByUID = [:]
             cachedKeywordHitCount = 0
-            cachedRealtimeClusters = base
+            if !base.isEmpty || !viewModel.isLoading {
+                cachedRealtimeClusters = base
+            }
+            normalizeTopSectionIfNeeded()
             return
         }
 
@@ -376,13 +486,18 @@ struct FeedView: View {
         let matched = base.filter { hitUIDs.contains($0.primary.uid) }
         cachedKeywordHitCount = matched.count
         if matched.isEmpty {
-            cachedRealtimeClusters = base
+            if !base.isEmpty || !viewModel.isLoading {
+                cachedRealtimeClusters = base
+            }
             normalizeTopSectionIfNeeded()
             return
         }
 
         let others = base.filter { !hitUIDs.contains($0.primary.uid) }
-        cachedRealtimeClusters = matched + others
+        let nextRealtime = matched + others
+        if !nextRealtime.isEmpty || !viewModel.isLoading {
+            cachedRealtimeClusters = nextRealtime
+        }
         normalizeTopSectionIfNeeded()
     }
 
@@ -412,23 +527,46 @@ struct FeedView: View {
         return hits
     }
 
-    private func clusterCell(_ cluster: TelegraphCluster, keywordHits: [String], allowEventDetail: Bool) -> some View {
-        let showMetaRow = !keywordHits.isEmpty || (allowEventDetail && cluster.isMerged)
+    private func clusterCell(
+        _ cluster: TelegraphCluster,
+        keywordHits: [String],
+        allowEventDetail: Bool
+    ) -> some View {
+        let showMetaRow = !keywordHits.isEmpty
+        let workflow = viewModel.workflowState(for: cluster.primary)
+        let keywordSuggestion = suggestedKeyword(for: cluster.primary)
 
-        return VStack(spacing: 8) {
+        return VStack(spacing: 10) {
             TelegraphCardView(
                 item: cluster.primary,
-                workflow: viewModel.workflowState(for: cluster.primary),
                 quotes: viewModel.quotes(for: cluster),
                 analysis: viewModel.analysisByUID[cluster.primary.uid],
                 isAnalyzing: viewModel.analyzingUIDs.contains(cluster.primary.uid),
+                highlightKeywords: keywordHits,
+                isStarred: workflow.isStarred,
+                onToggleStarred: {
+                    viewModel.toggleStarred(uid: cluster.primary.uid)
+                    AppHaptics.impact()
+                },
+                onMarkRead: {
+                    viewModel.markRead(uid: cluster.primary.uid)
+                    AppHaptics.impact()
+                },
+                onMuteSource24h: {
+                    applySourceMute(sourceCode: cluster.primary.source, duration: 24 * 3600)
+                },
+                onMuteSource7d: {
+                    applySourceMute(sourceCode: cluster.primary.source, duration: 7 * 24 * 3600)
+                },
+                onAddKeyword: {
+                    guard !keywordSuggestion.isEmpty else { return }
+                    _ = settings.addKeywordSubscription(keywordSuggestion)
+                    AppHaptics.impact()
+                },
+                keywordSuggestion: keywordSuggestion,
                 onAnalyze: {
                     Task { await viewModel.analyze(item: cluster.primary, settings: settings) }
-                },
-                onTogglePinned: { viewModel.togglePinned(uid: cluster.primary.uid) },
-                onToggleStarred: { viewModel.toggleStarred(uid: cluster.primary.uid) },
-                onToggleReadLater: { viewModel.toggleReadLater(uid: cluster.primary.uid) },
-                onToggleRead: { viewModel.toggleRead(uid: cluster.primary.uid) }
+                }
             )
 
             if showMetaRow {
@@ -443,29 +581,13 @@ struct FeedView: View {
                                 .background(Color.orange.opacity(0.12), in: Capsule())
                         }
                     }
-
-                    Spacer()
-
-                    if allowEventDetail, cluster.isMerged {
-                        Button {
-                            viewModel.markRead(uid: cluster.primary.uid)
-                            selectedCluster = cluster
-                        } label: {
-                            Label("事件详情", systemImage: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.black.opacity(0.06), in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.primary)
-                    }
+                    Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 4)
             }
 
             if cluster.isMerged {
-                clusterFooter(cluster)
+                clusterFooter(cluster, allowEventDetail: allowEventDetail)
             }
 
             if expandedClusterIDs.contains(cluster.id), !cluster.variants.isEmpty {
@@ -481,6 +603,13 @@ struct FeedView: View {
                 )
             }
         }
+        .id(cluster.id)
+        .transition(
+            .asymmetric(
+                insertion: .move(edge: .top).combined(with: .opacity),
+                removal: .opacity
+            )
+        )
         .background(TwitterTheme.surface)
         .overlay(alignment: .bottom) {
             Divider()
@@ -488,36 +617,57 @@ struct FeedView: View {
         }
     }
 
-    private func clusterFooter(_ cluster: TelegraphCluster) -> some View {
-        HStack(spacing: 8) {
-            Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Text(cluster.sourceNames.joined(separator: " / "))
-                .font(.caption)
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if expandedClusterIDs.contains(cluster.id) {
-                        expandedClusterIDs.remove(cluster.id)
-                    } else {
-                        expandedClusterIDs.insert(cluster.id)
-                    }
-                }
-            } label: {
-                Text(expandedClusterIDs.contains(cluster.id) ? "收起版本" : "展开版本")
+    private func clusterFooter(_ cluster: TelegraphCluster, allowEventDetail: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label("同事件 \(cluster.mergedCount) 条", systemImage: "square.stack.3d.up")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.blue)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.blue.opacity(0.1), in: Capsule())
+                    .foregroundStyle(.secondary)
+
+                Text(cluster.sourceNames.joined(separator: " / "))
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
+
+            HStack(spacing: 8) {
+                if allowEventDetail {
+                    Button {
+                        viewModel.markRead(uid: cluster.primary.uid)
+                        selectedCluster = cluster
+                    } label: {
+                        Label("事件详情", systemImage: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if expandedClusterIDs.contains(cluster.id) {
+                            expandedClusterIDs.remove(cluster.id)
+                        } else {
+                            expandedClusterIDs.insert(cluster.id)
+                        }
+                    }
+                } label: {
+                    Text(expandedClusterIDs.contains(cluster.id) ? "收起版本" : "展开版本")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.1), in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+            }
         }
         .padding(.horizontal, 4)
     }
@@ -598,62 +748,139 @@ struct FeedView: View {
         return "暂无复盘内容，点击右上角“刷新”生成。"
     }
 
-    private func errorBanner(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(text)
-                .font(.footnote)
-                .foregroundStyle(.red)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 8) {
-                if let lastAt = viewModel.lastSuccessfulRefreshAt {
-                    Text("上次成功：\(lastAt.formatted(date: .omitted, time: .standard))")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("重试") {
-                    Task { await viewModel.refresh(using: settings, trigger: .manual) }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
+    @MainActor
+    private func handleActivationChange() async {
+        guard isActive else {
+            viewModel.stopAutoRefresh()
+            return
         }
-        .padding(12)
-        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.red.opacity(0.2), lineWidth: 1)
+
+        let firstActivation = !didBootstrap
+        if firstActivation {
+            didBootstrap = true
+            viewModel.setFilter(.all)
+            _ = viewModel.syncKeywordHitsToFavorites(using: settings)
+        }
+
+        if settings.autoRefreshEnabled {
+            viewModel.startAutoRefresh(using: settings, immediateRefresh: firstActivation)
+        } else if firstActivation {
+            await viewModel.refresh(using: settings, trigger: .startup)
+        }
+        recomputeSectionCaches()
+
+        if homeButtonTrigger != lastHandledHomeButtonTrigger {
+            await handleHomeButtonPressedIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func handleHomeButtonPressedIfNeeded() async {
+        guard homeButtonTrigger != lastHandledHomeButtonTrigger else { return }
+        lastHandledHomeButtonTrigger = homeButtonTrigger
+        let started = CFAbsoluteTimeGetCurrent()
+
+        let currentSection = topSection
+        if let topClusterID = sectionClusters(currentSection).first?.id {
+            readingScrollRequest = FeedScrollRequest(section: currentSection, clusterID: topClusterID)
+        }
+
+        await viewModel.refresh(using: settings, trigger: .manual)
+        recomputeSectionCaches()
+        AppTelemetryCenter.shared.record(
+            name: "home_button_refresh",
+            value: (CFAbsoluteTimeGetCurrent() - started) * 1000,
+            meta: ["section": currentSection.rawValue]
         )
-        .padding(.horizontal, 12)
     }
 
-    private var emptyCard: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("暂无快讯")
-                .font(.headline)
-            Text("下拉刷新或开启自动刷新")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+    private func applySourceMute(sourceCode: String, duration: TimeInterval) {
+        guard let source = NewsSource(rawValue: sourceCode) else { return }
+        settings.muteSource(source, duration: duration)
+        AppHaptics.impact()
+        viewModel.invalidateCursor()
+        Task { await viewModel.refresh(using: settings, trigger: .manual) }
+    }
+
+    private func suggestedKeyword(for item: TelegraphItem) -> String {
+        let preferred = item.displayTitle.isEmpty ? item.text : item.displayTitle
+        let separators = CharacterSet(charactersIn: "，,。；;：:、!！?？()（）【】[]\n\t ")
+        let parts = preferred
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 2 }
+
+        if let first = parts.first {
+            return String(first.prefix(12))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .padding(.horizontal, 12)
+        return ""
+    }
+
+    private func sectionClusters(_ section: FeedTopSection) -> [TelegraphCluster] {
+        section == .headline ? headlineClusters : realtimeClusters
+    }
+
+    private func pendingBadgeCount(for section: FeedTopSection) -> Int {
+        switch section {
+        case .headline:
+            return viewModel.pendingHeadlineNewItemsCount
+        case .realtime:
+            return viewModel.pendingNewItemsCount
+        }
+    }
+
+    private func sectionIDsSignature(_ section: FeedTopSection) -> String {
+        let ids = sectionClusters(section).prefix(80).map(\.id).joined(separator: "|")
+        return "\(section.rawValue)|\(ids)"
+    }
+
+    private func sectionTopAnchorID(_ section: FeedTopSection) -> String {
+        "feed.top.anchor.\(section.rawValue)"
     }
 }
 
-private struct FeedScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private enum FeedTopSection {
+private enum FeedTopSection: String, CaseIterable {
     case headline
     case realtime
+}
+
+private struct FeedScrollRequest: Equatable {
+    let section: FeedTopSection
+    let clusterID: String
+}
+
+private struct FeedSkeletonCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.black.opacity(0.08))
+                    .frame(width: 68, height: 11)
+                Spacer()
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.black.opacity(0.08))
+                    .frame(width: 58, height: 11)
+            }
+
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.black.opacity(0.09))
+                .frame(height: 16)
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.black.opacity(0.06))
+                .frame(height: 14)
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.black.opacity(0.06))
+                .frame(width: 220, height: 14)
+
+            HStack {
+                Spacer()
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.06))
+                    .frame(width: 90, height: 28)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .redacted(reason: .placeholder)
+    }
 }

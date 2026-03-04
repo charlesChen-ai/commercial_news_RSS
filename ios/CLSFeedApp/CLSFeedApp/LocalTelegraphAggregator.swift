@@ -30,7 +30,7 @@ final class LocalTelegraphAggregator {
         self.session = session
     }
 
-    func fetch(limit: Int, sources: [NewsSource]) async throws -> TelegraphResponse {
+    func fetch(limit: Int, sources: [NewsSource], cursor: String? = nil) async throws -> TelegraphResponse {
         let chosen = sources.isEmpty ? NewsSource.allCases : sources
         let perSourceLimit = max(20, min(180, Int(ceil(Double(limit) * 1.4))))
 
@@ -86,12 +86,25 @@ final class LocalTelegraphAggregator {
             return SourceHealth(source: source.rawValue, sourceName: source.displayName, ok: false, count: 0, error: "source_not_found")
         }
 
+        let filtered: [TelegraphItem]
+        let cursorPoint = TelegraphCursor.decode(cursor)
+        if let cursorPoint {
+            filtered = uidUnique.filter { TelegraphCursor.isAfter($0, cursor: cursorPoint) }
+        } else {
+            filtered = uidUnique
+        }
+        let visible = Array(filtered.prefix(limit))
+        let nextCursor = visible.first.map { TelegraphCursor.encode(ctime: $0.ctime, uid: $0.uid) } ?? cursor
+
         return TelegraphResponse(
             ok: true,
             fetchedAt: ISO8601DateFormatter().string(from: Date()),
-            items: Array(uidUnique.prefix(limit)),
+            items: visible,
             sources: health,
-            selectedSources: chosen.map(\.rawValue)
+            selectedSources: chosen.map(\.rawValue),
+            cursor: cursor,
+            nextCursor: nextCursor,
+            incremental: cursorPoint != nil
         )
     }
 
